@@ -41,6 +41,15 @@ resource "aws_security_group" "k8s_node_sg" {
     description = "Kong Proxy Access"
   }
 
+  # Kubernetes API Ingress
+  ingress {
+    from_port   = 6443
+    to_port     = 6443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+    description = "Kubernetes API Access"
+  }
+
   # Egress (All Traffic)
   egress {
     from_port   = 0

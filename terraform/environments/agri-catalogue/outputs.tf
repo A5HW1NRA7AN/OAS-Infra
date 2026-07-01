@@ -44,7 +44,7 @@ resource "local_file" "hosts_k8s_yaml" {
         node1:
           ansible_host: ${module.k8s_node.node_public_ip}
           ip: ${module.k8s_node.node_private_ip}
-          access_ip: ${module.k8s_node.node_public_ip}
+          access_ip: ${module.k8s_node.node_private_ip}
           ansible_user: ubuntu
       children:
         kube_control_plane:
@@ -63,6 +63,6 @@ resource "local_file" "hosts_k8s_yaml" {
         calico_rr:
           hosts: {}
       vars:
-        ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=30m -o ControlPath=/tmp/ansible-ssh-%h-%p-%r -o StrictHostKeyChecking=no -i /home/rajan/Projects/OAS-Infra/terraform/environments/agri-catalogue/oas-key.pem'
+        ansible_ssh_common_args: '-o ControlMaster=auto -o ControlPersist=30m -o ControlPath=/tmp/ansible-ssh-%h-%p-%r -o StrictHostKeyChecking=no'
   EOT
 }

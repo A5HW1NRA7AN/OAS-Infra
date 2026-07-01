@@ -45,12 +45,12 @@ resource "aws_instance" "k8s_node" {
 }
 
 # ── Elastic IP ────────────────────────────────────────────────────────────────
-
-resource "aws_eip" "node_eip" {
-  domain   = "vpc"
-  instance = aws_instance.k8s_node.id
-
-  tags = {
-    Name = "${var.cluster_name}-eip"
-  }
-}
+# Temporarily disabled due to AWS quota limits for the UAT pilot
+# resource "aws_eip" "node_eip" {
+#   domain   = "vpc"
+#   instance = aws_instance.k8s_node.id
+# 
+#   tags = {
+#     Name = "${var.cluster_name}-eip"
+#   }
+# }

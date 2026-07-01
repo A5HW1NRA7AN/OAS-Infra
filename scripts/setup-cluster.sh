@@ -11,7 +11,7 @@ fi
 
 ENV_NAME="$1"
 
-SCRIPT_DIR="$(cd "$(dirname "$${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
 
@@ -33,12 +33,12 @@ terraform apply -auto-approve
 echo ""
 echo "[Step 2] Deploying Kubernetes via Kubespray..."
 cd "$REPO_ROOT"
-./kubespray/deploy_kubespray.sh "$ENV_NAME"
+bash ./kubespray/deploy_kubespray.sh "$ENV_NAME"
 
 # 3. Post-install Config (Namespaces, StorageClass, ECR Secret)
 echo ""
 echo "[Step 3] Post-install Configuration..."
-./kubespray/post_install.sh "$ENV_NAME"
+bash ./kubespray/post_install.sh "$ENV_NAME"
 
 # Export kubeconfig to run helm/kubectl locally
 export KUBECONFIG="$REPO_ROOT/scratch_kubeconfig"
@@ -49,9 +49,11 @@ echo "[Step 4] Deploying Data Services (Postgres, Redis, Elasticsearch)..."
 helm repo add bitnami https://charts.bitnami.com/bitnami
 helm repo update
 
-# Prompt for Postgres password securely
-read -s -p "Enter a password for PostgreSQL 'verg_user': " PG_PASSWORD
-echo ""
+# Prompt for Postgres password securely if not provided via env
+if [ -z "$PG_PASSWORD" ]; then
+  read -s -p "Enter a password for PostgreSQL 'verg_user': " PG_PASSWORD
+  echo ""
+fi
 
 kubectl create secret generic postgres-creds -n data \
   --from-literal=username=verg_user \

@@ -7,7 +7,7 @@ if [ -z "$1" ]; then
 fi
 ENV_NAME="$1"
 
-SCRIPT_DIR="$(cd "$(dirname "$${BASH_SOURCE[0]}")" && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
 
@@ -60,7 +60,7 @@ echo "==> Retrieving kubeconfig to local machine..."
 scp -i "$KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$NODE_IP:~/.kube/config "$REPO_ROOT/scratch_kubeconfig"
 
 # Replace 127.0.0.1 with the public IP
-sed -i "s/127.0.0.1/$NODE_IP/g" "$REPO_ROOT/scratch_kubeconfig"
+sed -i.bak "s/127.0.0.1/$NODE_IP/g" "$REPO_ROOT/scratch_kubeconfig"
 
 echo "==> Local kubeconfig saved to $REPO_ROOT/scratch_kubeconfig"
 echo "To use it: export KUBECONFIG=$REPO_ROOT/scratch_kubeconfig"
