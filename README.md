@@ -24,7 +24,7 @@ The target architecture is a single-node Kubernetes cluster running on an AWS EC
    │     └── Kong (NodePort :30080) ──────────────┐│
    │                                              ││
    │   namespace: app                             ▼│
-   │     └── catalogue-service (ClusterIP :8080) ◄─┘│
+   │     └── catalogue-service (ClusterIP :8080) ◄─┘
    │              │                                │
    │   namespace: data                             │
    │     ├── postgresql (ClusterIP :5432)          │
