@@ -79,10 +79,10 @@ EOF
                             ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
                                 if /usr/local/bin/helm status catalogue-service -n app >/dev/null 2>&1; then
                                     /usr/local/bin/helm upgrade catalogue-service ~/helm/catalogue-service \\
-                                        -n app --reuse-values --set image.tag=\${IMAGE_TAG}
+                                        -n app --reuse-values --set image.tag=${IMAGE_TAG}
                                 else
                                     /usr/local/bin/helm upgrade --install catalogue-service ~/helm/catalogue-service \\
-                                        -n app --set image.tag=\${IMAGE_TAG}
+                                        -n app --set image.tag=${IMAGE_TAG}
                                 fi
                             '
                         """
