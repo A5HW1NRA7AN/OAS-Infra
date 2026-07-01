@@ -10,25 +10,39 @@ pipeline {
     }
 
     stages {
+        stage('Checkout Application') {
+            steps {
+                dir('app') {
+                    git branch: 'main', url: 'https://github.com/Yeswanth07/agri-catalogue-service.git'
+                }
+            }
+        }
+
         stage('Build & Test') {
             steps {
-                sh './mvnw clean verify -B'
+                dir('app') {
+                    sh './mvnw clean verify -B'
+                }
             }
         }
 
         stage('Docker Build') {
             steps {
-                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                dir('app') {
+                    sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                }
             }
         }
 
         stage('Push to ECR') {
             steps {
-                sh """
-                    aws ecr get-login-password --region ${ECR_REGION} | \
-                        docker login --username AWS --password-stdin ${ECR_REPO}
-                    docker push ${ECR_REPO}:${IMAGE_TAG}
-                """
+                dir('app') {
+                    sh """
+                        aws ecr get-login-password --region ${ECR_REGION} | \
+                            docker login --username AWS --password-stdin ${ECR_REPO}
+                        docker push ${ECR_REPO}:${IMAGE_TAG}
+                    """
+                }
             }
         }
 
@@ -50,9 +64,12 @@ pipeline {
                                     --dry-run=client -o yaml | kubectl apply -f -
                             '
                             
+                            # Copy the helm charts to the EC2 instance
+                            scp -o StrictHostKeyChecking=no -r ./helm ubuntu@\${EC2_HOST}:~/helm
+
                             # Deploy the application
                             ssh -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
-                                helm upgrade catalogue-service ./helm/catalogue-service \\
+                                helm upgrade catalogue-service ~/helm/catalogue-service \\
                                     -n app --reuse-values --set image.tag=\${IMAGE_TAG}
                             '
                         """
