@@ -5,7 +5,8 @@ pipeline {
         ECR_REPO   = "379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service"
         ECR_REGION = "ap-south-1"
         IMAGE_TAG  = "${env.GIT_COMMIT.take(7)}"
-        EC2_HOST   = "<ELASTIC_IP>"  // Replace with the K8s EC2 Elastic IP once provisioned
+        EC2_HOST   = "35.78.108.187"
+        EC2_USER   = "ubuntu"
     }
 
     stages {
