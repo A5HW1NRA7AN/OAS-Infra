@@ -77,7 +77,7 @@ EOF
 
                             # Deploy the application
                             ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
-                                helm upgrade catalogue-service ~/helm/catalogue-service \\
+                                /usr/local/bin/helm upgrade catalogue-service ~/helm/catalogue-service \\
                                     -n app --reuse-values --set image.tag=\${IMAGE_TAG}
                             '
                         """
