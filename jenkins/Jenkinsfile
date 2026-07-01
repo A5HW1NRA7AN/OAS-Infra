@@ -60,10 +60,10 @@ EOF
                     usernamePassword(credentialsId: 'DB_CREDENTIALS', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS'),
                     usernamePassword(credentialsId: 'ES_CREDENTIALS', usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS')
                 ]) {
-                    sshagent(['ec2-deploy-key']) {
+                    withCredentials([sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY')]) {
                         sh """
                             # Inject secrets securely without exposing them in shell history
-                            ssh -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
                                 kubectl create secret generic catalogue-service-secrets -n app \\
                                     --from-literal=SPRING_DATASOURCE_USERNAME="\${DB_USER}" \\
                                     --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
@@ -73,10 +73,10 @@ EOF
                             '
                             
                             # Copy the helm charts to the EC2 instance
-                            scp -o StrictHostKeyChecking=no -r ./helm ubuntu@\${EC2_HOST}:~/helm
+                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no -r ./helm ubuntu@\${EC2_HOST}:~/helm
 
                             # Deploy the application
-                            ssh -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
                                 helm upgrade catalogue-service ~/helm/catalogue-service \\
                                     -n app --reuse-values --set image.tag=\${IMAGE_TAG}
                             '
