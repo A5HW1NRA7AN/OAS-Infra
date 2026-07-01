@@ -1,0 +1,83 @@
+pipeline {
+    agent any
+
+    environment {
+        ECR_REPO   = "379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service"
+        ECR_REGION = "ap-south-1"
+        IMAGE_TAG  = "${env.GIT_COMMIT.take(7)}"
+        EC2_HOST   = "<ELASTIC_IP>"  // Replace with the K8s EC2 Elastic IP once provisioned
+    }
+
+    stages {
+        stage('Build & Test') {
+            steps {
+                sh './mvnw clean verify -B'
+            }
+        }
+
+        stage('Docker Build') {
+            steps {
+                sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+            }
+        }
+
+        stage('Push to ECR') {
+            steps {
+                sh """
+                    aws ecr get-login-password --region ${ECR_REGION} | \
+                        docker login --username AWS --password-stdin ${ECR_REPO}
+                    docker push ${ECR_REPO}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Inject Secrets & Deploy') {
+            steps {
+                withCredentials([
+                    usernamePassword(credentialsId: 'DB_CREDENTIALS', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS'),
+                    usernamePassword(credentialsId: 'ES_CREDENTIALS', usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS')
+                ]) {
+                    sshagent(['ec2-deploy-key']) {
+                        sh """
+                            # Inject secrets securely without exposing them in shell history
+                            ssh -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
+                                kubectl create secret generic catalogue-service-secrets -n app \\
+                                    --from-literal=SPRING_DATASOURCE_USERNAME="\${DB_USER}" \\
+                                    --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
+                                    --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
+                                    --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
+                                    --dry-run=client -o yaml | kubectl apply -f -
+                            '
+                            
+                            # Deploy the application
+                            ssh -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
+                                helm upgrade catalogue-service ./helm/catalogue-service \\
+                                    -n app --reuse-values --set image.tag=\${IMAGE_TAG}
+                            '
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Smoke Test') {
+            steps {
+                withCredentials([string(credentialsId: 'SMOKETEST_API_KEY', variable: 'API_KEY')]) {
+                    sh """
+                        curl -sf http://${EC2_HOST}:30080/cropcategory/v1/read/smoketest \
+                            -H "apikey: \${API_KEY}" || exit 1
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        failure {
+            echo "Pipeline failed — check stage logs above for details."
+        }
+        success {
+            echo "Deployment of ${IMAGE_TAG} completed successfully."
+        }
+    }
+}

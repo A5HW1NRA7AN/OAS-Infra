@@ -1,0 +1,48 @@
+# Single source of truth for deployment scaffolding.
+# Edit THIS file when the application changes — never edit chart templates,
+# kong.yml service/route blocks, or Jenkinsfile values directly.
+
+service:
+  name: catalogue-service
+  namespace: app
+  container_port: 8080
+
+image:
+  repository: 379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service
+  ecr_region: ap-south-1
+
+health:
+  liveness_path: /actuator/health/liveness
+  readiness_path: /actuator/health/readiness
+
+openapi:
+  docs_path: /v3/api-docs
+  base_url_in_cluster: http://catalogue-service.app.svc.cluster.local:8080
+
+routing:
+  smoke_test_prefix: cropcategory   # used by jenkins-pipeline-sync; update if this domain is ever removed
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { cpu: 500m, memory: 1Gi }
+
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  # Maps to Spring Boot relaxed-binding env vars — add/remove as the app's
+  # application.properties keys change. Values here are k8s Service DNS
+  # names, not secrets.
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/verg_db
+  ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
+  ELASTICSEARCH_PORT: "9200"
+  SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
+  SPRING_REDIS_PORT: "6379"
+
+secrets:
+  secret_name: catalogue-service-secrets
+
+helm:
+  release_name: catalogue-service
+  chart_path: helm/catalogue-service
+
+jenkins:
+  smoke_test_api_key_credential: SMOKETEST_API_KEY   # Jenkins credential ID, not the key itself

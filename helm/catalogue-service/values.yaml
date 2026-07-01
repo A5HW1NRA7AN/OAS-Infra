@@ -1,0 +1,53 @@
+# values.yaml — catalogue-service
+# All values here trace back to service.config.yaml at repo root.
+# Edit service.config.yaml first, then regenerate this file via the
+# helm-chart-scaffolding skill if needed.
+
+replicaCount: 1
+
+image:
+  repository: 379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ecr-pull-secret
+
+nameOverride: ""
+fullnameOverride: ""
+secretName: catalogue-service-secrets
+
+service:
+  type: ClusterIP
+  port: 8080
+
+health:
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 30
+    periodSeconds: 15
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 20
+    periodSeconds: 10
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+# Environment variables injected into the container.
+# These map to Spring Boot relaxed-binding env vars and override
+# application.properties defaults at runtime.
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/verg_db
+  ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
+  ELASTICSEARCH_PORT: "9200"
+  SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
+  SPRING_REDIS_PORT: "6379"
+
+containerPort: 8080

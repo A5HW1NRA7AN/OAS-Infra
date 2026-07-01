@@ -1,0 +1,70 @@
+# kong.yml — Declarative Kong configuration (DB-less mode)
+# AUTO-GENERATED — re-run scripts/generate-kong-routes.sh to refresh routes from /v3/api-docs
+#
+# WARNING: Before deploying, replace ALL <CHANGE_ME> placeholder keys with
+# real keys generated via: openssl rand -hex 24
+# The populated version of this file with real keys must NEVER be committed to Git.
+# Store it as a Kubernetes Secret or inject via Jenkins credentials at deploy time.
+
+_format_version: "3.0"
+
+services:
+  - name: catalogue-service
+    url: http://catalogue-service.app.svc.cluster.local:8080
+    routes:
+      - name: catalogue-all
+        paths:
+          - /cropcategory
+          - /croptype
+          - /cropvariety
+          - /extensionequipment
+          - /fertilizer
+          - /insecticide
+          - /livestock
+          - /location
+          - /pesticide
+          - /season
+          - /seed
+          - /soil
+        strip_path: false
+    plugins:
+      - name: key-auth
+        config:
+          key_names:
+            - apikey
+      - name: rate-limiting
+        config:
+          minute: 60
+          policy: local
+
+consumers:
+  - username: consumer-01
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-02
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-03
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-04
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-05
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-06
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-07
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-08
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-09
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
+  - username: consumer-10
+    keyauth_credentials:
+      - key: "<CHANGE_ME>"
