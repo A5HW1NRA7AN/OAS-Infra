@@ -41,6 +41,15 @@ resource "aws_security_group" "k8s_node_sg" {
     description = "Kong Proxy Access"
   }
 
+  # Management UIs (NodePort)
+  ingress {
+    from_port   = 30081
+    to_port     = 30084
+    protocol    = "tcp"
+    cidr_blocks = var.allowed_kong_cidrs
+    description = "Management UIs Access (pgAdmin, Elasticvue, RedisCommander, Elasticsearch)"
+  }
+
   # Kubernetes API Ingress
   ingress {
     from_port   = 6443

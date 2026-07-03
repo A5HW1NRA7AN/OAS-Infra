@@ -24,11 +24,11 @@ service:
 health:
   liveness:
     path: /actuator/health/liveness
-    initialDelaySeconds: 30
+    initialDelaySeconds: 90
     periodSeconds: 15
   readiness:
     path: /actuator/health/readiness
-    initialDelaySeconds: 20
+    initialDelaySeconds: 90
     periodSeconds: 10
 
 resources:

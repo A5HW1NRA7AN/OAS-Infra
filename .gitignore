@@ -2,7 +2,7 @@
 # OAS-Infra .gitignore
 # ============================
 
-# --- Terraform (kept from original — does no harm) ---
+# --- Terraform ---
 .terraform/
 *.tfstate
 *.tfstate.*
@@ -19,20 +19,21 @@ override.tf.json
 terraform.rc
 
 # --- Credentials & secrets ---
-# Kong config with real API keys (only the template with <CHANGE_ME> is committed)
-kong/kong-secrets.yml
 .env
 *.pem
 *.key
 *.kubeconfig
 kubeconfig
 
+# --- Terraform generated outputs ---
+env.sh
+hosts_k8s.yaml
+scratch_kubeconfig
+*.bak
+
 # --- Helm ---
-# Packaged chart archives
 *.tgz
-# Downloaded chart dependencies
 helm/*/charts/
-# Chart lock file
 helm/*/Chart.lock
 
 # --- IDE & OS ---
@@ -47,11 +48,26 @@ Thumbs.db
 # --- Logs ---
 *.log
 
-# --- Terraform Generated scripts ---
-env.sh
-hosts_k8s.yaml
-scratch_kubeconfig
+# --- Scratch / debug files ---
+scratch/
 
-# --- Internal Agent & Docs (Do not push) ---
+# --- One-off scripts ---
+fix_kong.py
+
+# --- Agent artifacts (session-specific, not project code) ---
+AGENTS.md
+implementation_plan.md
+walkthrough.md
 .agents/
 docs/
+
+# --- Postman (generated locally, not core infra) ---
+*.postman_collection.json
+*.postman_test_run.json
+scripts/generate-postman.py
+
+# --- Management UIs manifest (deployed ad-hoc, not part of core chart) ---
+helm/management-uis.yaml
+
+# --- Misc ---
+website-imp.txt
