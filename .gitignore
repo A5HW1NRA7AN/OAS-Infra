@@ -51,23 +51,11 @@ Thumbs.db
 # --- Scratch / debug files ---
 scratch/
 
-# --- One-off scripts ---
-fix_kong.py
-
-# --- Agent artifacts (session-specific, not project code) ---
-AGENTS.md
-implementation_plan.md
-walkthrough.md
+# --- Agent & local development artifacts (local only — never pushed to git) ---
+# These support our own testing/development workflow and are not part of the
+# core files a developer needs to fork and set up the repository.
 .agents/
+.claude/
+AGENTS.md
+CLAUDE.md
 docs/
-
-# --- Postman (generated locally, not core infra) ---
-*.postman_collection.json
-*.postman_test_run.json
-scripts/generate-postman.py
-
-# --- Management UIs manifest (deployed ad-hoc, not part of core chart) ---
-helm/management-uis.yaml
-
-# --- Misc ---
-website-imp.txt

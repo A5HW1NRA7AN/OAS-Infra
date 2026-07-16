@@ -30,13 +30,13 @@ data "aws_subnets" "default" {
 
 module "k8s_node" {
   source = "../../modules/k8s-node"
-  
-  aws_region = var.aws_region
+
+  aws_region           = var.aws_region
   cluster_name         = "Agri-Catalogue-Pilot"
   vpc_id               = aws_default_vpc.default.id
   subnet_id            = tolist(data.aws_subnets.default.ids)[0]
-  instance_type        = "t3.xlarge"
-  root_volume_size     = 150
+  instance_type        = var.instance_type
+  root_volume_size     = var.root_volume_size
   allowed_ssh_cidrs    = var.allowed_ssh_cidrs
   allowed_kong_cidrs   = var.allowed_kong_cidrs
   iam_instance_profile = var.iam_instance_profile

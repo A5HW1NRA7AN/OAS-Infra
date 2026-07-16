@@ -6,7 +6,11 @@
 replicaCount: 1
 
 image:
-  repository: 379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service
+  # repository is intentionally empty here: the full ECR URL is composed from
+  # service.config.yaml (ecr_repository_name + ecr_region) plus the account ID
+  # derived at deploy time, and injected by the Jenkins pipeline via
+  # `--set image.repository=...`. Never hardcode an account ID in this repo.
+  repository: ""
   tag: latest
   pullPolicy: IfNotPresent
 
@@ -44,7 +48,7 @@ resources:
 # application.properties defaults at runtime.
 env:
   MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/verg_db
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/oas_db
   ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
