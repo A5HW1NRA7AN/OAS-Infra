@@ -41,22 +41,24 @@ resource "aws_security_group" "k8s_node_sg" {
     description = "Kong Proxy Access"
   }
 
-  # Management UIs (NodePort)
+  # Management UIs (NodePort) — admin tooling, restricted to admin CIDRs (not consumers)
   ingress {
     from_port   = 30081
     to_port     = 30084
     protocol    = "tcp"
-    cidr_blocks = var.allowed_kong_cidrs
+    cidr_blocks = var.allowed_ssh_cidrs
     description = "Management UIs Access (pgAdmin, Elasticvue, RedisCommander, Elasticsearch)"
   }
 
-  # Kubernetes API Ingress
+  # Kubernetes API Ingress — restricted to admin CIDRs so local kubectl/helm can
+  # drive the cluster, without exposing the API server to the whole internet.
+  # Lock allowed_ssh_cidrs down to admin/Jenkins IPs in production.
   ingress {
     from_port   = 6443
     to_port     = 6443
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Kubernetes API Access"
+    cidr_blocks = var.allowed_ssh_cidrs
+    description = "Kubernetes API Access (admin CIDRs only)"
   }
 
   # Egress (All Traffic)

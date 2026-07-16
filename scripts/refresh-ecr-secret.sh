@@ -7,6 +7,10 @@
 # Usage:
 #   ./scripts/refresh-ecr-secret.sh
 #
+# Nothing is hardcoded: the AWS account ID is derived via
+# `aws sts get-caller-identity` and the region from the EC2 instance metadata
+# (falling back to service.config.yaml's ecr_region when run off-instance).
+#
 # Prerequisites:
 #   - aws CLI (uses instance profile for auth — no hardcoded credentials)
 #   - kubectl (with access to the cluster)
@@ -16,12 +20,36 @@
 
 set -euo pipefail
 
-ECR_REGION="ap-south-1"
-ECR_REGISTRY="379220350808.dkr.ecr.${ECR_REGION}.amazonaws.com"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+CONFIG_FILE="${REPO_ROOT}/service.config.yaml"
+
 SECRET_NAME="ecr-pull-secret"
 NAMESPACE="app"
 
-echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Refreshing ECR pull secret..."
+# Resolve region: instance metadata first, then service.config.yaml, then AWS_REGION.
+ECR_REGION="$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/placement/region || true)"
+if [ -z "${ECR_REGION}" ]; then
+  if command -v yq &>/dev/null && [ -f "${CONFIG_FILE}" ]; then
+    ECR_REGION="$(yq '.image.ecr_region' "${CONFIG_FILE}")"
+  else
+    ECR_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+  fi
+fi
+
+if [ -z "${ECR_REGION}" ]; then
+  echo "ERROR: Could not determine AWS region (instance metadata, service.config.yaml, and AWS_REGION all empty)." >&2
+  exit 1
+fi
+
+# Derive the account ID — never hardcode it.
+ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)" || {
+    echo "ERROR: Failed to resolve AWS account ID. Verify the instance profile / credentials." >&2
+    exit 1
+}
+ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${ECR_REGION}.amazonaws.com"
+
+echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] Refreshing ECR pull secret for ${ECR_REGISTRY}..."
 
 # Get a fresh ECR login token using the instance profile
 ECR_TOKEN=$(aws ecr get-login-password --region "${ECR_REGION}") || {
