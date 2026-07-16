@@ -41,8 +41,7 @@ fi
 echo "Fetching OpenAPI spec from ${DOCS_URL} ..."
 SPEC=$(curl -sf "${DOCS_URL}") || {
     echo "ERROR: Failed to fetch /v3/api-docs from ${DOCS_URL}" >&2
-    echo "This is a platform-contract violation — the app must expose a valid OpenAPI endpoint." >&2
-    echo "See .agents/rules/platform-contract.md" >&2
+    echo "The application must expose a valid OpenAPI endpoint at ${DOCS_URL}." >&2
     exit 1
 }
 

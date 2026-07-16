@@ -1,13 +1,15 @@
 # kong.yml — Declarative Kong configuration (DB-less mode)
-# AUTO-GENERATED — re-run scripts/generate-kong-routes.sh to refresh routes from /v3/api-docs
 #
-# WARNING: Before deploying, replace ALL <CHANGE_ME> placeholder keys with
-# real keys generated via: openssl rand -hex 24
-# The populated version of this file with real keys must NEVER be committed to Git.
-# Store it as a Kubernetes Secret or inject via Jenkins credentials at deploy time.
+# This file is GENERATED, not hand-edited:
+#   - services[].routes[].paths            <- scripts/generate-kong-routes.sh  (from the app's live /v3/api-docs)
+#   - consumers[] and the key-auth plugin  <- scripts/generate-kong-auth.sh    (from service.config.yaml `auth`)
+#
+# UAT note: a single static consumer with a deliberately NON-SECRET key
+# (see service.config.yaml `auth.api_key`) is used for the pilot, and rate
+# limiting is intentionally disabled. Pre-prod replaces this with proper
+# IAM/RBAC.
 
 _format_version: "3.0"
-
 services:
   - name: catalogue-service
     url: http://catalogue-service.app.svc.cluster.local:8080
@@ -32,39 +34,7 @@ services:
         config:
           key_names:
             - apikey
-      - name: rate-limiting
-        config:
-          minute: 60
-          policy: local
-
 consumers:
-  - username: consumer-01
+  - username: oas-uat-consumer
     keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-02
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-03
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-04
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-05
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-06
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-07
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-08
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-09
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
-  - username: consumer-10
-    keyauth_credentials:
-      - key: "<CHANGE_ME>"
+      - key: testapi-123

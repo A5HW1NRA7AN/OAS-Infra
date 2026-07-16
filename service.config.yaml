@@ -1,6 +1,9 @@
 # Single source of truth for deployment scaffolding.
 # Edit THIS file when the application changes — never edit chart templates,
-# kong.yml service/route blocks, or Jenkinsfile values directly.
+# kong.yml service/route/consumer blocks, or Jenkinsfile values directly.
+#
+# Nothing environment-specific (AWS account ID, node IP) or secret is stored
+# here. Those are derived at build/deploy time or injected as secrets.
 
 service:
   name: catalogue-service
@@ -8,8 +11,13 @@ service:
   container_port: 8080
 
 image:
-  repository: 379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service
-  ecr_region: ap-south-1
+  # Full image URL is composed at build/deploy time as:
+  #   <account-id>.dkr.ecr.<ecr_region>.amazonaws.com/<ecr_repository_name>
+  # The account ID is derived dynamically (`aws sts get-caller-identity`) so it
+  # is never hardcoded in this repo.
+  ecr_repository_name: catalogue-service
+  ecr_region: ap-northeast-1
+  tag: latest
 
 health:
   liveness_path: /actuator/health/liveness
@@ -22,16 +30,38 @@ openapi:
 routing:
   smoke_test_prefix: cropcategory   # used by jenkins-pipeline-sync; update if this domain is ever removed
 
+# Application container resource envelope. Data-service (Postgres/Redis/
+# Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
+# budget block there.
 resources:
   requests: { cpu: 250m, memory: 512Mi }
   limits: { cpu: 500m, memory: 1Gi }
+
+# PostgreSQL database identity. The password is a secret and is NEVER stored
+# here — it is injected at runtime (Jenkins DB_CREDENTIALS -> Kubernetes Secret).
+# scripts/setup-cluster.sh reads name/username from here so the bootstrap and
+# the app agree on one value. SPRING_DATASOURCE_URL below must reference the
+# same database name.
+database:
+  name: oas_db
+  username: oas_user
+
+# API-gateway authentication for the UAT pilot.
+# NOTE: `api_key` is an intentionally static, NON-SECRET value for UAT only.
+# It exists so consumers can be onboarded without a full identity system yet.
+# Pre-prod replaces this with proper IAM/RBAC (Keycloak/OAuth).
+# Rate limiting is deliberately OFF for UAT.
+auth:
+  kong_consumer: oas-uat-consumer
+  api_key_header: apikey
+  api_key: testapi-123
 
 env:
   MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
   # Maps to Spring Boot relaxed-binding env vars — add/remove as the app's
   # application.properties keys change. Values here are k8s Service DNS
-  # names, not secrets.
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/verg_db
+  # names, not secrets. The database name must match `database.name` above.
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/oas_db
   ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
@@ -44,5 +74,9 @@ helm:
   release_name: catalogue-service
   chart_path: helm/catalogue-service
 
-jenkins:
-  smoke_test_api_key_credential: SMOKETEST_API_KEY   # Jenkins credential ID, not the key itself
+# Jenkins credential IDs the pipeline expects (the values live in Jenkins, not here):
+#   DB_CREDENTIALS  — Postgres username/password (username must equal database.username)
+#   ES_CREDENTIALS  — Elasticsearch username/password
+#   ec2-deploy-key  — SSH private key for the K8s node
+# The UAT smoke test authenticates with auth.api_key above (static, non-secret).
+# Pre-prod should switch this to a real Jenkins secret-text credential.

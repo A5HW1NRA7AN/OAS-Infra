@@ -1,15 +1,58 @@
 pipeline {
     agent any
 
+    // The target node IP is environment-specific and changes per provisioning —
+    // it is passed in at build time (terraform output node_public_ip), never
+    // hardcoded in SCM.
+    parameters {
+        string(
+            name: 'EC2_HOST',
+            defaultValue: '',
+            description: 'Public IP / DNS of the K8s node (terraform output: node_public_ip).'
+        )
+    }
+
     environment {
-        ECR_REPO   = "379220350808.dkr.ecr.ap-south-1.amazonaws.com/catalogue-service"
-        ECR_REGION = "ap-south-1"
-        IMAGE_TAG  = "${env.GIT_COMMIT.take(7)}"
-        EC2_HOST   = "35.78.108.187"
-        EC2_USER   = "ubuntu"
+        IMAGE_TAG = "${env.GIT_COMMIT.take(7)}"
+        EC2_USER  = "ubuntu"
     }
 
     stages {
+        stage('Load Config') {
+            steps {
+                script {
+                    if (!params.EC2_HOST?.trim()) {
+                        error("EC2_HOST parameter is required (terraform output node_public_ip).")
+                    }
+                    // Dependency-free reads from the single source of truth.
+                    def cfg = { key ->
+                        sh(
+                            script: "grep -E '^[[:space:]]*${key}:' service.config.yaml | head -1 | awk '{print \$2}'",
+                            returnStdout: true
+                        ).trim()
+                    }
+                    env.ECR_REPO_NAME = cfg('ecr_repository_name')
+                    env.ECR_REGION    = cfg('ecr_region')
+                    env.HELM_RELEASE  = cfg('release_name')
+                    env.HELM_CHART    = cfg('chart_path')      // e.g. helm/catalogue-service
+                    env.APP_NAMESPACE = cfg('namespace')
+                    env.SMOKE_PREFIX  = cfg('smoke_test_prefix')
+                    env.SMOKE_API_KEY = cfg('api_key')
+
+                    // Derive the AWS account ID — never hardcode it.
+                    env.AWS_ACCOUNT_ID = sh(
+                        script: "aws sts get-caller-identity --query Account --output text",
+                        returnStdout: true
+                    ).trim()
+                    env.ECR_REPO = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.ECR_REGION}.amazonaws.com/${env.ECR_REPO_NAME}"
+
+                    echo "Deploy target : ${params.EC2_HOST}"
+                    echo "ECR repository: ${env.ECR_REPO}"
+                    echo "Helm release  : ${env.HELM_RELEASE} (ns: ${env.APP_NAMESPACE})"
+                }
+            }
+        }
+
         stage('Checkout Application') {
             steps {
                 dir('app') {
@@ -63,26 +106,28 @@ EOF
                     withCredentials([sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY')]) {
                         sh """
                             # Inject secrets securely without exposing them in shell history
-                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
-                                kubectl create secret generic catalogue-service-secrets -n app \\
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${EC2_USER}@${params.EC2_HOST} '
+                                kubectl create secret generic catalogue-service-secrets -n ${APP_NAMESPACE} \\
                                     --from-literal=SPRING_DATASOURCE_USERNAME="\${DB_USER}" \\
                                     --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
                                     --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
                                     --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
                                     --dry-run=client -o yaml | kubectl apply -f -
                             '
-                            
+
                             # Copy the helm charts to the EC2 instance
-                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no -r ./helm ubuntu@\${EC2_HOST}:~/helm
+                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no -r ./helm ${EC2_USER}@${params.EC2_HOST}:~/helm
 
                             # Deploy the application
-                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ubuntu@\${EC2_HOST} '
-                                if /usr/local/bin/helm status catalogue-service -n app >/dev/null 2>&1; then
-                                    /usr/local/bin/helm upgrade catalogue-service ~/helm/catalogue-service \\
-                                        -n app --reuse-values --set image.tag=${IMAGE_TAG}
+                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${EC2_USER}@${params.EC2_HOST} '
+                                if /usr/local/bin/helm status ${HELM_RELEASE} -n ${APP_NAMESPACE} >/dev/null 2>&1; then
+                                    /usr/local/bin/helm upgrade ${HELM_RELEASE} ~/${HELM_CHART} \\
+                                        -n ${APP_NAMESPACE} --reuse-values --set image.tag=${IMAGE_TAG}
                                 else
-                                    /usr/local/bin/helm upgrade --install catalogue-service ~/helm/catalogue-service \\
-                                        -n app --set image.tag=${IMAGE_TAG}
+                                    /usr/local/bin/helm upgrade --install ${HELM_RELEASE} ~/${HELM_CHART} \\
+                                        -n ${APP_NAMESPACE} \\
+                                        --set image.repository=${ECR_REPO} \\
+                                        --set image.tag=${IMAGE_TAG}
                                 fi
                             '
                         """
@@ -93,12 +138,10 @@ EOF
 
         stage('Smoke Test') {
             steps {
-                withCredentials([string(credentialsId: 'SMOKETEST_API_KEY', variable: 'API_KEY')]) {
-                    sh """
-                        curl -sf http://${EC2_HOST}:30080/cropcategory/v1/read/smoketest \
-                            -H "apikey: \${API_KEY}" || exit 1
-                    """
-                }
+                sh """
+                    curl -sf http://${params.EC2_HOST}:30080/${SMOKE_PREFIX}/v1/read/smoketest \
+                        -H "apikey: ${SMOKE_API_KEY}" || exit 1
+                """
             }
         }
     }
