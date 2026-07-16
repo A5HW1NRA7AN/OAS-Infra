@@ -29,14 +29,14 @@ private.
        (TCP 22: admin/Jenkins, TCP 30080: Kong proxy)
                            │
                  EC2 instance (single node)
-   ┌─────────────────────────────────────────────────────┐
-   │        Kubernetes (Kubespray, single node)           │
+   ┌───────────────────────────────────────────────────────┐
+   │        Kubernetes (Kubespray, single node)            │
    │                                                       │
    │   namespace: platform                                 │
    │     └── Kong  (NodePort :30080, DB-less) ────────────┐│
    │                                                      ▼│
    │   namespace: app                                      │
-   │     └── catalogue-service (ClusterIP :8080) ◄─────────┘
+   │     └── catalogue-service (ClusterIP :8080) ◄────────┘|
    │              │                                        │
    │   namespace: data                                     │
    │     ├── postgresql    (ClusterIP :5432)               │
@@ -44,7 +44,7 @@ private.
    │     └── elasticsearch (ClusterIP :9200)               │
    │                                                       │
    │   storageClass: local-path (PVs on the node disk)     │
-   └─────────────────────────────────────────────────────┘
+   └───────────────────────────────────────────────────────┘
 
    Jenkins ──build──▶ ECR ──(containerd pulls image)──▶ EC2
            └──SSH──────────────────▶ helm upgrade on the node
