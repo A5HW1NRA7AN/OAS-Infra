@@ -38,6 +38,8 @@ pipeline {
                     env.APP_NAMESPACE = cfg('namespace')
                     env.SMOKE_PREFIX  = cfg('smoke_test_prefix')
                     env.SMOKE_API_KEY = cfg('api_key')
+                    env.APP_REPO_URL    = cfg('url')
+                    env.APP_REPO_BRANCH = cfg('branch')
 
                     // Derive the AWS account ID — never hardcode it.
                     env.AWS_ACCOUNT_ID = sh(
@@ -56,7 +58,7 @@ pipeline {
         stage('Checkout Application') {
             steps {
                 dir('app') {
-                    git branch: 'main', url: 'https://github.com/Yeswanth07/agri-catalogue-service.git'
+                    git branch: env.APP_REPO_BRANCH, url: env.APP_REPO_URL
                 }
             }
         }
