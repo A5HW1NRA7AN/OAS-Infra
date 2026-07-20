@@ -51,6 +51,9 @@ Thumbs.db
 # --- Scratch / debug files ---
 scratch/
 
+# --- Demo handoff assets (contain live credentials/endpoints — never committed) ---
+demo/
+
 # --- Agent & local development artifacts (local only — never pushed to git) ---
 # These support our own testing/development workflow and are not part of the
 # core files a developer needs to fork and set up the repository.

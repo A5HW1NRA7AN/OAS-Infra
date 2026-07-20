@@ -1,3 +1,21 @@
+// CI/CD for agri-catalogue-service.
+//
+// OAS-Infra is the pipeline owner: the Jenkins job checks out THIS repo, then
+// this pipeline checks out the application repo (app_repo.url in
+// service.config.yaml) into ./app, builds the image from the app's own
+// multi-stage Dockerfile, pushes to ECR, and deploys via the Helm chart in
+// this repo.
+//
+// Design notes:
+//   * The image tag is the APPLICATION commit SHA (captured from ./app), NOT
+//     env.GIT_COMMIT (which is OAS-Infra's SHA, since that is the job's SCM).
+//   * Every build publishes two tags: the immutable <app-sha> and a moving
+//     `latest`. Deploys always reference the immutable SHA so a running pod
+//     traces back to an exact commit.
+//   * AWS credentials are NOT ambient on the agent — every `aws` call is
+//     wrapped in the `aws-credentials` binding.
+//   * Helm is not installed on the Jenkins agent, so deploy runs the node's
+//     own /usr/local/bin/helm over SSH.
 pipeline {
     agent any
 
@@ -13,8 +31,7 @@ pipeline {
     }
 
     environment {
-        IMAGE_TAG = "${env.GIT_COMMIT.take(7)}"
-        EC2_USER  = "ubuntu"
+        EC2_USER = "ubuntu"
     }
 
     stages {
@@ -31,22 +48,27 @@ pipeline {
                             returnStdout: true
                         ).trim()
                     }
-                    env.ECR_REPO_NAME = cfg('ecr_repository_name')
-                    env.ECR_REGION    = cfg('ecr_region')
-                    env.HELM_RELEASE  = cfg('release_name')
-                    env.HELM_CHART    = cfg('chart_path')      // e.g. helm/catalogue-service
-                    env.APP_NAMESPACE = cfg('namespace')
-                    env.SMOKE_PREFIX  = cfg('smoke_test_prefix')
-                    env.SMOKE_API_KEY = cfg('api_key')
+                    env.ECR_REPO_NAME   = cfg('ecr_repository_name')
+                    env.ECR_REGION      = cfg('ecr_region')
+                    env.HELM_RELEASE    = cfg('release_name')
+                    env.HELM_CHART      = cfg('chart_path')      // e.g. helm/catalogue-service
+                    env.APP_NAMESPACE   = cfg('namespace')
+                    env.SECRET_NAME     = cfg('secret_name')     // catalogue-service-secrets
+                    env.SMOKE_PREFIX    = cfg('smoke_test_prefix')
+                    env.SMOKE_API_KEY   = cfg('api_key')
                     env.APP_REPO_URL    = cfg('url')
                     env.APP_REPO_BRANCH = cfg('branch')
 
-                    // Derive the AWS account ID — never hardcode it.
-                    env.AWS_ACCOUNT_ID = sh(
-                        script: "aws sts get-caller-identity --query Account --output text",
-                        returnStdout: true
-                    ).trim()
-                    env.ECR_REPO = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.ECR_REGION}.amazonaws.com/${env.ECR_REPO_NAME}"
+                    // Derive the AWS account ID — never hardcode it. The agent has
+                    // no ambient AWS env, so the call is wrapped in the credential.
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
+                        env.AWS_ACCOUNT_ID = sh(
+                            script: "aws sts get-caller-identity --query Account --output text",
+                            returnStdout: true
+                        ).trim()
+                    }
+                    env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.ECR_REGION}.amazonaws.com"
+                    env.ECR_REPO     = "${env.ECR_REGISTRY}/${env.ECR_REPO_NAME}"
 
                     echo "Deploy target : ${params.EC2_HOST}"
                     echo "ECR repository: ${env.ECR_REPO}"
@@ -58,42 +80,43 @@ pipeline {
         stage('Checkout Application') {
             steps {
                 dir('app') {
-                    git branch: env.APP_REPO_BRANCH, url: env.APP_REPO_URL
+                    git branch: env.APP_REPO_BRANCH, url: env.APP_REPO_URL, credentialsId: 'github-credentials'
+                    script {
+                        // The image tag is the APPLICATION commit, not OAS-Infra's.
+                        env.IMAGE_TAG = sh(script: "git rev-parse --short=7 HEAD", returnStdout: true).trim()
+                    }
                 }
+                echo "Application commit (immutable image tag): ${env.IMAGE_TAG}"
             }
         }
 
-        stage('Build & Test') {
-            steps {
-                dir('app') {
-                    sh '''
-                        mkdir -p .mvn/wrapper
-                        cat <<EOF > .mvn/wrapper/maven-wrapper.properties
-distributionUrl=https://repo.maven.apache.org/maven2/org/apache/maven/apache-maven/3.9.5/apache-maven-3.9.5-bin.zip
-wrapperUrl=https://repo.maven.apache.org/maven2/org/apache/maven/wrapper/maven-wrapper/3.2.0/maven-wrapper-3.2.0.jar
-EOF
-                        chmod +x mvnw
-                        ./mvnw clean package -DskipTests -B
-                    '''
-                }
-            }
-        }
+        // NOTE: there is intentionally no separate Maven "Build & Test" stage.
+        // The application's multi-stage Dockerfile runs `mvn clean package`
+        // inside its build stage, so building the JAR on the agent first would
+        // just be thrown away by `docker build`.
 
         stage('Docker Build') {
             steps {
                 dir('app') {
-                    sh "docker build -t ${ECR_REPO}:${IMAGE_TAG} ."
+                    sh """
+                        docker build \\
+                            -t ${ECR_REPO}:${IMAGE_TAG} \\
+                            -t ${ECR_REPO}:latest \\
+                            .
+                    """
                 }
             }
         }
 
         stage('Push to ECR') {
             steps {
-                dir('app') {
+                // AWS creds are not ambient on the agent; provide them explicitly.
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                     sh """
-                        aws ecr get-login-password --region ${ECR_REGION} | \
-                            docker login --username AWS --password-stdin ${ECR_REPO}
+                        aws ecr get-login-password --region ${ECR_REGION} | \\
+                            docker login --username AWS --password-stdin ${ECR_REGISTRY}
                         docker push ${ECR_REPO}:${IMAGE_TAG}
+                        docker push ${ECR_REPO}:latest
                     """
                 }
             }
@@ -103,37 +126,44 @@ EOF
             steps {
                 withCredentials([
                     usernamePassword(credentialsId: 'DB_CREDENTIALS', usernameVariable: 'DB_USER', passwordVariable: 'DB_PASS'),
-                    usernamePassword(credentialsId: 'ES_CREDENTIALS', usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS')
+                    usernamePassword(credentialsId: 'ES_CREDENTIALS', usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS'),
+                    sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY')
                 ]) {
-                    withCredentials([sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY')]) {
-                        sh """
-                            # Inject secrets securely without exposing them in shell history
-                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${EC2_USER}@${params.EC2_HOST} '
-                                kubectl create secret generic catalogue-service-secrets -n ${APP_NAMESPACE} \\
-                                    --from-literal=SPRING_DATASOURCE_USERNAME="\${DB_USER}" \\
-                                    --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
-                                    --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
-                                    --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
-                                    --dry-run=client -o yaml | kubectl apply -f -
-                            '
+                    sh """
+                        set -e
+                        SSH_OPTS="-i \${SSH_KEY} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null"
 
-                            # Copy the helm charts to the EC2 instance
-                            scp -i \$SSH_KEY -o StrictHostKeyChecking=no -r ./helm ${EC2_USER}@${params.EC2_HOST}:~/helm
+                        # 1) Ensure the target namespace exists (idempotent).
+                        ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} \\
+                            "kubectl create namespace ${APP_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
 
-                            # Deploy the application
-                            ssh -i \$SSH_KEY -o StrictHostKeyChecking=no ${EC2_USER}@${params.EC2_HOST} '
-                                if /usr/local/bin/helm status ${HELM_RELEASE} -n ${APP_NAMESPACE} >/dev/null 2>&1; then
-                                    /usr/local/bin/helm upgrade ${HELM_RELEASE} ~/${HELM_CHART} \\
-                                        -n ${APP_NAMESPACE} --reuse-values --set image.tag=${IMAGE_TAG}
-                                else
-                                    /usr/local/bin/helm upgrade --install ${HELM_RELEASE} ~/${HELM_CHART} \\
-                                        -n ${APP_NAMESPACE} \\
-                                        --set image.repository=${ECR_REPO} \\
-                                        --set image.tag=${IMAGE_TAG}
-                                fi
-                            '
-                        """
-                    }
+                        # 2) Build the Secret manifest LOCALLY (values come from the
+                        #    masked withCredentials env vars) and pipe only the YAML
+                        #    over SSH. Secret values never appear in remote argv or the
+                        #    node's shell history, and are masked in the Jenkins console.
+                        kubectl create secret generic ${SECRET_NAME} -n ${APP_NAMESPACE} \\
+                            --from-literal=SPRING_DATASOURCE_USERNAME="\${DB_USER}" \\
+                            --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
+                            --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
+                            --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
+                            --dry-run=client -o yaml \\
+                          | ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} "kubectl apply -n ${APP_NAMESPACE} -f -"
+
+                        # 3) Ship the Helm chart (lives in OAS-Infra, at the workspace
+                        #    root — NOT inside ./app).
+                        scp \$SSH_OPTS -r ./helm ${EC2_USER}@${params.EC2_HOST}:~/helm
+
+                        # 4) Deploy with the node's own Helm. image.repository is ALWAYS
+                        #    set (deterministically derived) so a corrected ECR repo name
+                        #    is never masked by --reuse-values. Deploy references the
+                        #    IMMUTABLE SHA tag; --wait blocks on rollout readiness.
+                        ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} \\
+                            "/usr/local/bin/helm upgrade --install ${HELM_RELEASE} ~/${HELM_CHART} \\
+                                --namespace ${APP_NAMESPACE} --create-namespace \\
+                                --set image.repository=${ECR_REPO} \\
+                                --set image.tag=${IMAGE_TAG} \\
+                                --wait --timeout 300s"
+                    """
                 }
             }
         }
@@ -141,19 +171,35 @@ EOF
         stage('Smoke Test') {
             steps {
                 sh """
-                    curl -sf http://${params.EC2_HOST}:30080/${SMOKE_PREFIX}/v1/read/smoketest \
-                        -H "apikey: ${SMOKE_API_KEY}" || exit 1
+                    for i in \$(seq 1 10); do
+                        if curl -sf http://${params.EC2_HOST}:30080/${SMOKE_PREFIX}/v1/read/smoketest \\
+                              -H "apikey: ${SMOKE_API_KEY}"; then
+                            echo "Smoke test passed."
+                            exit 0
+                        fi
+                        echo "Smoke test attempt \$i failed; retrying in 15s..."
+                        sleep 15
+                    done
+                    echo "Smoke test failed after retries."
+                    exit 1
                 """
             }
         }
     }
 
     post {
+        always {
+            // Remove local images so the controller host does not accumulate layers.
+            sh """
+                docker rmi ${ECR_REPO}:${IMAGE_TAG} || true
+                docker rmi ${ECR_REPO}:latest || true
+            """
+        }
         failure {
             echo "Pipeline failed — check stage logs above for details."
         }
         success {
-            echo "Deployment of ${IMAGE_TAG} completed successfully."
+            echo "Deployed image tag ${IMAGE_TAG} to ${params.EC2_HOST} successfully."
         }
     }
 }

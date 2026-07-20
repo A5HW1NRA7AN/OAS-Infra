@@ -21,7 +21,7 @@ image:
   #   <account-id>.dkr.ecr.<ecr_region>.amazonaws.com/<ecr_repository_name>
   # The account ID is derived dynamically (`aws sts get-caller-identity`) so it
   # is never hardcoded in this repo.
-  ecr_repository_name: catalogue-service
+  ecr_repository_name: service-catalogue
   ecr_region: ap-northeast-1
   tag: latest
 
