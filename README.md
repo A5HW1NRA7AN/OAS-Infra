@@ -29,8 +29,8 @@ private.
        (TCP 22: admin/Jenkins, TCP 30080: Kong proxy)
                            │
                  EC2 instance (single node)
-   ┌─────────────────────────────────────────────────────┐
-   │        Kubernetes (Kubespray, single node)           │
+   ┌───────────────────────────────────────────────────────┐
+   │        Kubernetes (Kubespray, single node)            │
    │                                                       │
    │   namespace: platform                                 │
    │     └── Kong  (NodePort :30080, DB-less) ────────────┐│
@@ -41,10 +41,10 @@ private.
    │   namespace: data                                     │
    │     ├── postgresql    (ClusterIP :5432)               │
    │     ├── redis         (ClusterIP :6379)               │
-   │     └── elasticsearch (ClusterIP :9200)               │
+   │     └── elasticsearch (ClusterIP :9200)               │ 
    │                                                       │
    │   storageClass: local-path (PVs on the node disk)     │
-   └─────────────────────────────────────────────────────┘
+   └───────────────────────────────────────────────────────┘
 
    Jenkins ──build──▶ ECR ──(containerd pulls image)──▶ EC2
            └──SSH──────────────────▶ helm upgrade on the node
@@ -155,10 +155,11 @@ Provide the `EC2_HOST` build parameter (from `terraform output node_public_ip`).
 run the pipeline:
 
 1. Loads configuration from `service.config.yaml` and derives the ECR repository URL.
-2. Checks out and builds the application, then builds and pushes the Docker image to ECR.
+2. Checks out the application and builds its multi-stage Dockerfile (which compiles the
+   JAR), tags the image with the application commit SHA and `latest`, and pushes both to ECR.
 3. Injects database and Elasticsearch credentials into the `catalogue-service-secrets`
    Kubernetes Secret on the node.
-4. Runs `helm upgrade` over SSH to deploy the new image.
+4. Runs `helm upgrade` over SSH to deploy the immutable SHA-tagged image.
 5. Executes a smoke test through Kong.
 
 ## Operations
