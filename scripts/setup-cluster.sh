@@ -15,10 +15,17 @@ ENV_NAME="$1"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
-CONFIG_FILE="$REPO_ROOT/service.config.yaml"
+# Convention: the environment name matches the service name, so the same
+# argument resolves both the Terraform env and the service's config.
+CONFIG_FILE="$REPO_ROOT/services/$ENV_NAME.config.yaml"
 
 if [ ! -d "$ENV_DIR" ]; then
   echo "Error: Environment directory not found at $ENV_DIR"
+  exit 1
+fi
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "Error: Service config not found at $CONFIG_FILE"
   exit 1
 fi
 
@@ -54,7 +61,7 @@ echo "    before running this script, or override in a *.tfvars file."
 #   PostgreSQL       512 Mi / 250m     1 Gi / 500m
 #   Redis            256 Mi / 100m     512 Mi / 250m
 #   Kong             256 Mi / 100m     512 Mi / 500m
-#   catalogue-app    512 Mi / 250m     1 Gi / 500m       (from service.config.yaml)
+#   catalogue-app    512 Mi / 250m     1 Gi / 500m       (from services/<service>.config.yaml)
 # ─────────────────────────────────────────────────────────────────────────────
 
 # 1. Provision EC2 node via Terraform
@@ -93,6 +100,7 @@ fi
 kubectl create secret generic postgres-creds -n data \
   --from-literal=username="$DB_USER" \
   --from-literal=password="$PG_PASSWORD" \
+  --from-literal=postgres-password="$PG_PASSWORD" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 helm upgrade --install postgres bitnami/postgresql -n data \
@@ -125,7 +133,10 @@ helm upgrade --install elasticsearch bitnami/elasticsearch -n data \
   --set master.resources.requests.cpu=500m \
   --set master.resources.requests.memory=2Gi \
   --set master.resources.limits.cpu=1 \
-  --set master.resources.limits.memory=3Gi
+  --set master.resources.limits.memory=3Gi \
+  --set image.tag=8.17.3 \
+  --set sysctlImage.image.tag=latest \
+  --set volumePermissions.image.tag=latest
 
 # 5. Kong Gateway
 echo ""
@@ -141,13 +152,13 @@ helm upgrade --install kong kong/kong -n platform \
   --set admin.type=ClusterIP
 
 echo ""
-echo "Next, render and apply the Kong declarative config:"
-echo "  1. Generate routes from the live app:   ./scripts/generate-kong-routes.sh"
-echo "  2. Render the UAT consumer + API key:   ./scripts/generate-kong-auth.sh"
+echo "Next, render and apply the Kong declarative config for this service:"
+echo "  1. Generate routes from the live app:   ./scripts/generate-kong-routes.sh $ENV_NAME"
+echo "  2. Render the UAT consumer + API key:   ./scripts/generate-kong-auth.sh $ENV_NAME"
 echo "  3. Apply as a ConfigMap:"
 echo "     kubectl create configmap kong-config -n platform \\"
-echo "       --from-file=kong.yml=kong/kong.yml -o yaml --dry-run=client | kubectl apply -f -"
-echo "     kubectl rollout restart deployment kong -n platform"
+echo "       --from-file=kong.yml=kong/$ENV_NAME.yml -o yaml --dry-run=client | kubectl apply -f -"
+echo "     kubectl rollout restart deployment/kong-kong -n platform"
 echo "  (Rate limiting is intentionally OFF for UAT; auth is a single static key.)"
 
 echo ""

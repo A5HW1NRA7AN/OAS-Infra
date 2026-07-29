@@ -1,0 +1,6 @@
+apiVersion: v2
+name: oas-catalogue
+description: Generic Helm chart for OAS catalogue services (VERG registry framework) — UAT pilot deployment. One chart, per-service values files (values-<service>.yaml).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

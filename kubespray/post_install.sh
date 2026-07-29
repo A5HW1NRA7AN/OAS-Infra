@@ -59,8 +59,9 @@ EOF
 echo "==> Retrieving kubeconfig to local machine..."
 scp -i "$KEY_PATH" -o StrictHostKeyChecking=no ubuntu@$NODE_IP:~/.kube/config "$REPO_ROOT/scratch_kubeconfig"
 
-# Replace 127.0.0.1 with the public IP
+# Replace 127.0.0.1 with the public IP and enable insecure-skip-tls-verify for public IP access
 sed -i.bak "s/127.0.0.1/$NODE_IP/g" "$REPO_ROOT/scratch_kubeconfig"
+yq -i '.clusters[0].cluster["insecure-skip-tls-verify"] = true | del(.clusters[0].cluster["certificate-authority-data"])' "$REPO_ROOT/scratch_kubeconfig"
 
 echo "==> Local kubeconfig saved to $REPO_ROOT/scratch_kubeconfig"
 echo "To use it: export KUBECONFIG=$REPO_ROOT/scratch_kubeconfig"

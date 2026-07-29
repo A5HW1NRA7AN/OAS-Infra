@@ -1,0 +1,18 @@
+# values-organisation-catalogue.yaml — per-service overlay for organisation-catalogue.
+# Derived from services/organisation-catalogue.config.yaml. Passed to
+# `helm upgrade` with `-f` on top of the shared values.yaml. Regenerate via the
+# helm-chart-scaffolding skill — do not hand-edit.
+
+# Sets the deployed resource name to `organisation-catalogue` (matches the Kong
+# upstream URL organisation-catalogue.app.svc.cluster.local).
+fullnameOverride: organisation-catalogue
+
+secretName: organisation-catalogue-secrets
+
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/org_db
+  ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
+  ELASTICSEARCH_PORT: "9200"
+  SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
+  SPRING_REDIS_PORT: "6379"

@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "catalogue-service.fullname" . }}
+  name: {{ include "oas-catalogue.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "catalogue-service.labels" . | nindent 4 }}
+    {{- include "oas-catalogue.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
   selector:
     matchLabels:
-      {{- include "catalogue-service.selectorLabels" . | nindent 6 }}
+      {{- include "oas-catalogue.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "catalogue-service.selectorLabels" . | nindent 8 }}
+        {{- include "oas-catalogue.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -29,7 +29,7 @@ spec:
               protocol: TCP
           envFrom:
             - configMapRef:
-                name: {{ include "catalogue-service.fullname" . }}-config
+                name: {{ include "oas-catalogue.fullname" . }}-config
             {{- if .Values.secretName }}
             - secretRef:
                 name: {{ .Values.secretName }}

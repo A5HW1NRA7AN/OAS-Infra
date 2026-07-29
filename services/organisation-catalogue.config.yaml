@@ -1,19 +1,23 @@
-# Single source of truth for deployment scaffolding.
+# Single source of truth for deployment scaffolding — organisation-catalogue.
 # Edit THIS file when the application changes — never edit chart templates,
 # kong.yml service/route/consumer blocks, or Jenkinsfile values directly.
 #
 # Nothing environment-specific (AWS account ID, node IP) or secret is stored
 # here. Those are derived at build/deploy time or injected as secrets.
+#
+# organisation-catalogue runs on its OWN dedicated EC2 environment
+# (terraform/environments/organisation-catalogue) with its own Kong + data
+# services — it is NOT co-located with agri-catalogue.
 
 service:
-  name: catalogue-service
+  name: organisation-catalogue
   namespace: app
   container_port: 8080
 
 # Application source repo. The pipeline checks this out to build the image.
 # Edit here when the app repo moves — never hardcode it in the Jenkinsfile.
 app_repo:
-  url: https://github.com/Open-Agri-Stack/agri-catalogue-service.git
+  url: https://github.com/Open-Agri-Stack/organisation-catalogue.git
   branch: main
 
 image:
@@ -21,7 +25,11 @@ image:
   #   <account-id>.dkr.ecr.<ecr_region>.amazonaws.com/<ecr_repository_name>
   # The account ID is derived dynamically (`aws sts get-caller-identity`) so it
   # is never hardcoded in this repo.
-  ecr_repository_name: service-catalogue
+  #
+  # DISTINCT from agri's `service-catalogue` repo so the two services' images
+  # never collide. Create it once: aws ecr create-repository
+  #   --repository-name organisation-catalogue --region ap-northeast-1
+  ecr_repository_name: organisation-catalogue
   ecr_region: ap-northeast-1
   tag: latest
 
@@ -31,10 +39,13 @@ health:
 
 openapi:
   docs_path: /v3/api-docs
-  base_url_in_cluster: http://catalogue-service.app.svc.cluster.local:8080
+  base_url_in_cluster: http://organisation-catalogue.app.svc.cluster.local:8080
 
 routing:
-  smoke_test_prefix: cropcategory   # used by jenkins-pipeline-sync; update if this domain is ever removed
+  # organisation-catalogue exposes /org/v1/... and /audit/v1/... — the smoke
+  # test hits {prefix}/v1/read/smoketest. Confirm /org/v1/read/smoketest exists
+  # against the live /v3/api-docs during onboarding; adjust if the path differs.
+  smoke_test_prefix: org
 
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
@@ -47,10 +58,11 @@ resources:
 # here — it is injected at runtime (Jenkins DB_CREDENTIALS -> Kubernetes Secret).
 # scripts/setup-cluster.sh reads name/username from here so the bootstrap and
 # the app agree on one value. SPRING_DATASOURCE_URL below must reference the
-# same database name.
+# same database name. Distinct from agri's oas_db so the two services' data
+# stays isolated.
 database:
-  name: oas_db
-  username: oas_user
+  name: org_db
+  username: org_user
 
 # API-gateway authentication for the UAT pilot.
 # NOTE: `api_key` is an intentionally static, NON-SECRET value for UAT only.
@@ -67,22 +79,26 @@ env:
   # Maps to Spring Boot relaxed-binding env vars — add/remove as the app's
   # application.properties keys change. Values here are k8s Service DNS
   # names, not secrets. The database name must match `database.name` above.
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/oas_db
+  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/org_db
   ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
   SPRING_REDIS_PORT: "6379"
 
 secrets:
-  secret_name: catalogue-service-secrets
+  secret_name: organisation-catalogue-secrets
 
 helm:
-  release_name: catalogue-service
-  chart_path: helm/catalogue-service
+  release_name: organisation-catalogue
+  # Shared generic chart; per-service values file supplies env/secretName/fullnameOverride.
+  chart_path: helm/oas-catalogue
+  values_file: values-organisation-catalogue.yaml
 
 # Jenkins credential IDs the pipeline expects (the values live in Jenkins, not here):
 #   DB_CREDENTIALS  — Postgres username/password (username must equal database.username)
 #   ES_CREDENTIALS  — Elasticsearch username/password
-#   ec2-deploy-key  — SSH private key for the K8s node
+#   ec2-deploy-key  — SSH private key for the K8s node (organisation-catalogue node)
+# Scope these to the organisation-catalogue Jenkins job/folder so they carry
+# org's values, not agri's.
 # The UAT smoke test authenticates with auth.api_key above (static, non-secret).
 # Pre-prod should switch this to a real Jenkins secret-text credential.

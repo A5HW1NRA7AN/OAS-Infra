@@ -1,10 +1,14 @@
-// CI/CD for agri-catalogue-service.
+// CI/CD for OAS catalogue services (agri-catalogue, organisation-catalogue, …).
 //
 // OAS-Infra is the pipeline owner: the Jenkins job checks out THIS repo, then
 // this pipeline checks out the application repo (app_repo.url in
-// service.config.yaml) into ./app, builds the image from the app's own
-// multi-stage Dockerfile, pushes to ECR, and deploys via the Helm chart in
-// this repo.
+// services/<SERVICE>.config.yaml) into ./app, builds the image from the app's
+// own multi-stage Dockerfile, pushes to ECR, and deploys via the shared Helm
+// chart in this repo with the service's per-service values file.
+//
+// One pipeline, many services: the SERVICE build parameter selects which
+// services/<SERVICE>.config.yaml drives the build. Create one Jenkins job per
+// service (each with its own SERVICE + EC2_HOST and its own scoped credentials).
 //
 // Design notes:
 //   * The image tag is the APPLICATION commit SHA (captured from ./app), NOT
@@ -24,6 +28,11 @@ pipeline {
     // hardcoded in SCM.
     parameters {
         string(
+            name: 'SERVICE',
+            defaultValue: 'agri-catalogue',
+            description: 'Service to build/deploy — selects services/<SERVICE>.config.yaml (e.g. agri-catalogue, organisation-catalogue).'
+        )
+        string(
             name: 'EC2_HOST',
             defaultValue: '',
             description: 'Public IP / DNS of the K8s node (terraform output: node_public_ip).'
@@ -41,19 +50,27 @@ pipeline {
                     if (!params.EC2_HOST?.trim()) {
                         error("EC2_HOST parameter is required (terraform output node_public_ip).")
                     }
+                    if (!params.SERVICE?.trim()) {
+                        error("SERVICE parameter is required (selects services/<SERVICE>.config.yaml).")
+                    }
+                    def configFile = "services/${params.SERVICE}.config.yaml"
+                    if (sh(script: "test -f ${configFile}", returnStatus: true) != 0) {
+                        error("Service config not found: ${configFile}")
+                    }
                     // Dependency-free reads from the single source of truth.
                     def cfg = { key ->
                         sh(
-                            script: "grep -E '^[[:space:]]*${key}:' service.config.yaml | head -1 | awk '{print \$2}'",
+                            script: "grep -E '^[[:space:]]*${key}:' ${configFile} | head -1 | awk '{print \$2}'",
                             returnStdout: true
                         ).trim()
                     }
                     env.ECR_REPO_NAME   = cfg('ecr_repository_name')
                     env.ECR_REGION      = cfg('ecr_region')
                     env.HELM_RELEASE    = cfg('release_name')
-                    env.HELM_CHART      = cfg('chart_path')      // e.g. helm/catalogue-service
+                    env.HELM_CHART      = cfg('chart_path')      // shared: helm/oas-catalogue
+                    env.HELM_VALUES     = cfg('values_file')     // e.g. values-agri-catalogue.yaml
                     env.APP_NAMESPACE   = cfg('namespace')
-                    env.SECRET_NAME     = cfg('secret_name')     // catalogue-service-secrets
+                    env.SECRET_NAME     = cfg('secret_name')     // <service>-secrets
                     env.SMOKE_PREFIX    = cfg('smoke_test_prefix')
                     env.SMOKE_API_KEY   = cfg('api_key')
                     env.APP_REPO_URL    = cfg('url')
@@ -70,9 +87,11 @@ pipeline {
                     env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.ECR_REGION}.amazonaws.com"
                     env.ECR_REPO     = "${env.ECR_REGISTRY}/${env.ECR_REPO_NAME}"
 
+                    echo "Service       : ${params.SERVICE}"
                     echo "Deploy target : ${params.EC2_HOST}"
                     echo "ECR repository: ${env.ECR_REPO}"
                     echo "Helm release  : ${env.HELM_RELEASE} (ns: ${env.APP_NAMESPACE})"
+                    echo "Helm chart    : ${env.HELM_CHART} (-f ${env.HELM_VALUES})"
                 }
             }
         }
@@ -150,15 +169,21 @@ pipeline {
                           | ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} "kubectl apply -n ${APP_NAMESPACE} -f -"
 
                         # 3) Ship the Helm chart (lives in OAS-Infra, at the workspace
-                        #    root — NOT inside ./app).
+                        #    root — NOT inside ./app). Remove any previous copy first: with
+                        #    scp -r, if ~/helm already exists the chart nests into ~/helm/helm
+                        #    and `helm upgrade ~/helm/oas-catalogue` would deploy the STALE
+                        #    chart left there by an earlier run.
+                        ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} "rm -rf ~/helm"
                         scp \$SSH_OPTS -r ./helm ${EC2_USER}@${params.EC2_HOST}:~/helm
 
-                        # 4) Deploy with the node's own Helm. image.repository is ALWAYS
-                        #    set (deterministically derived) so a corrected ECR repo name
-                        #    is never masked by --reuse-values. Deploy references the
-                        #    IMMUTABLE SHA tag; --wait blocks on rollout readiness.
+                        # 4) Deploy with the node's own Helm. The shared chart is
+                        #    parameterized per service by the values file (-f); image.repository
+                        #    is ALWAYS set (deterministically derived) so a corrected ECR repo
+                        #    name is never masked. Deploy references the IMMUTABLE SHA tag;
+                        #    --wait blocks on rollout readiness.
                         ssh \$SSH_OPTS ${EC2_USER}@${params.EC2_HOST} \\
                             "/usr/local/bin/helm upgrade --install ${HELM_RELEASE} ~/${HELM_CHART} \\
+                                -f ~/${HELM_CHART}/${HELM_VALUES} \\
                                 --namespace ${APP_NAMESPACE} --create-namespace \\
                                 --set image.repository=${ECR_REPO} \\
                                 --set image.tag=${IMAGE_TAG} \\

@@ -1,28 +1,32 @@
 #!/usr/bin/env bash
 # generate-kong-routes.sh
-# Regenerates the route paths in kong/kong.yml by discovering top-level
+# Regenerates the route paths in kong/<service>.yml by discovering top-level
 # path prefixes from the application's live /v3/api-docs endpoint.
 #
 # Usage:
-#   ./scripts/generate-kong-routes.sh [APP_URL]
+#   ./scripts/generate-kong-routes.sh <service> [APP_URL]
 #
-# APP_URL defaults to the in-cluster URL from service.config.yaml:
-#   http://catalogue-service.app.svc.cluster.local:8080
-#
-# When running from a dev machine, use a port-forwarded URL:
-#   ./scripts/generate-kong-routes.sh http://localhost:8080
+# <service> selects services/<service>.config.yaml and kong/<service>.yml.
+# APP_URL defaults to the in-cluster URL from that config
+# (openapi.base_url_in_cluster). When running from a dev machine, use a
+# port-forwarded URL:
+#   ./scripts/generate-kong-routes.sh organisation-catalogue http://localhost:8080
 #
 # Prerequisites: curl, jq, yq (https://github.com/mikefarah/yq)
 
 set -euo pipefail
 
+if [[ -z "${1:-}" ]]; then
+    echo "Usage: $0 <service> [APP_URL]" >&2
+    echo "Example: $0 organisation-catalogue" >&2
+    exit 1
+fi
+SERVICE="$1"
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-KONG_FILE="${REPO_ROOT}/kong/kong.yml"
-DEFAULT_APP_URL="http://catalogue-service.app.svc.cluster.local:8080"
-
-APP_URL="${1:-${DEFAULT_APP_URL}}"
-DOCS_URL="${APP_URL}/v3/api-docs"
+CONFIG_FILE="${REPO_ROOT}/services/${SERVICE}.config.yaml"
+KONG_FILE="${REPO_ROOT}/kong/${SERVICE}.yml"
 
 # --- Pre-flight checks ---
 for cmd in curl jq yq; do
@@ -32,10 +36,35 @@ for cmd in curl jq yq; do
     fi
 done
 
-if [[ ! -f "${KONG_FILE}" ]]; then
-    echo "ERROR: Kong config not found at ${KONG_FILE}" >&2
+if [[ ! -f "${CONFIG_FILE}" ]]; then
+    echo "ERROR: service config not found at ${CONFIG_FILE}" >&2
     exit 1
 fi
+
+SERVICE_NAME="$(yq '.service.name' "${CONFIG_FILE}")"
+SERVICE_URL="$(yq '.openapi.base_url_in_cluster' "${CONFIG_FILE}")"
+APP_URL="${2:-${SERVICE_URL}}"
+DOCS_URL="${APP_URL}/v3/api-docs"
+
+# --- Seed a per-service kong skeleton if it does not exist yet ---
+# Name/url come from the single source of truth; routes/auth are filled in by
+# this script and generate-kong-auth.sh respectively (idempotent generation).
+if [[ ! -f "${KONG_FILE}" ]]; then
+    echo "Seeding new Kong config at ${KONG_FILE} ..."
+    SERVICE_NAME="${SERVICE_NAME}" SERVICE_URL="${SERVICE_URL}" yq -n '
+      ._format_version = "3.0" |
+      .services = [
+        {"name": strenv(SERVICE_NAME), "url": strenv(SERVICE_URL),
+         "routes": [{"name": (strenv(SERVICE_NAME) + "-all"), "paths": [], "strip_path": false}]}
+      ]
+    ' > "${KONG_FILE}"
+fi
+
+# Keep name/url in sync with the config on every run.
+SERVICE_NAME="${SERVICE_NAME}" SERVICE_URL="${SERVICE_URL}" yq -i '
+  .services[0].name = strenv(SERVICE_NAME) |
+  .services[0].url = strenv(SERVICE_URL)
+' "${KONG_FILE}"
 
 # --- Fetch OpenAPI spec ---
 echo "Fetching OpenAPI spec from ${DOCS_URL} ..."
@@ -60,12 +89,6 @@ echo "Discovered prefixes:"
 echo "${PREFIXES}" | while read -r prefix; do
     echo "  /${prefix}"
 done
-
-# --- Build the YAML paths array ---
-PATHS_YAML=""
-while read -r prefix; do
-    PATHS_YAML="${PATHS_YAML}  - /${prefix}\n"
-done <<< "${PREFIXES}"
 
 # --- Show diff of current vs new prefixes ---
 echo ""
@@ -109,9 +132,9 @@ yq -i ".services[0].routes[0].paths = ${PATHS_JSON}" "${KONG_FILE}"
 
 # --- Validate ---
 if yq '.' "${KONG_FILE}" > /dev/null 2>&1; then
-    echo "Validation: kong.yml is valid YAML."
+    echo "Validation: ${KONG_FILE} is valid YAML."
 else
-    echo "ERROR: kong.yml failed YAML validation after update!" >&2
+    echo "ERROR: ${KONG_FILE} failed YAML validation after update!" >&2
     exit 1
 fi
 
