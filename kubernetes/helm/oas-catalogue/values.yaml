@@ -34,14 +34,30 @@ service:
   port: 8080
 
 health:
+  # A startupProbe gates liveness/readiness until the app has finished booting
+  # (JVM warmup + Hibernate ddl-auto schema creation + data-service connections).
+  # failureThreshold * periodSeconds = max first-boot window (~5 min here), after
+  # which liveness/readiness take over. This prevents the default 1s probe timeout
+  # from failing a healthy-but-slow first start (the cause of the helm --wait
+  # "context deadline exceeded" during the initial organisation-catalogue deploy).
+  startup:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
   liveness:
     path: /actuator/health/liveness
-    initialDelaySeconds: 90
+    initialDelaySeconds: 0
     periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
   readiness:
     path: /actuator/health/readiness
-    initialDelaySeconds: 90
+    initialDelaySeconds: 0
     periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
 
 resources:
   requests:

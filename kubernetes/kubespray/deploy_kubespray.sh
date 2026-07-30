@@ -7,9 +7,9 @@ if [ -z "$1" ]; then
 fi
 ENV_NAME="$1"
 
-# Resolve directories
+# Resolve directories (this script lives in kubernetes/kubespray/, so repo root is two up).
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
 
 # Find env.sh

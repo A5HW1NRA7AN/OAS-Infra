@@ -34,17 +34,31 @@ spec:
             - secretRef:
                 name: {{ .Values.secretName }}
             {{- end }}
+          {{- if .Values.health.startup }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.health.startup.path }}
+              port: http
+            initialDelaySeconds: {{ .Values.health.startup.initialDelaySeconds }}
+            periodSeconds: {{ .Values.health.startup.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.startup.failureThreshold | default 30 }}
+          {{- end }}
           livenessProbe:
             httpGet:
               path: {{ .Values.health.liveness.path }}
               port: http
             initialDelaySeconds: {{ .Values.health.liveness.initialDelaySeconds }}
             periodSeconds: {{ .Values.health.liveness.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.liveness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.liveness.failureThreshold | default 3 }}
           readinessProbe:
             httpGet:
               path: {{ .Values.health.readiness.path }}
               port: http
             initialDelaySeconds: {{ .Values.health.readiness.initialDelaySeconds }}
             periodSeconds: {{ .Values.health.readiness.periodSeconds }}
+            timeoutSeconds: {{ .Values.health.readiness.timeoutSeconds | default 5 }}
+            failureThreshold: {{ .Values.health.readiness.failureThreshold | default 3 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}

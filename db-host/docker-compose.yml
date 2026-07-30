@@ -1,0 +1,116 @@
+# OAS data tier — all databases as Docker containers on the dedicated DB host.
+# Deployed by scripts/setup-cluster.sh onto the private db-host EC2 (fixed
+# private IP, e.g. 10.0.10.10). The k8s catalogue pods connect to that IP.
+#
+# - ONE Postgres instance with three databases (acs_db, oas_db, kong) created by
+#   init/10-databases.sql from the credentials in .env.
+# - Shared Elasticsearch (distinct indices per service) and Redis.
+# - Admin GUIs (pgAdmin/Kibana/RedisInsight) are reachable ONLY from the bastion
+#   (enforced by the SG); use an SSH tunnel through the bastion to open them.
+#
+# Ports are published on the host so the k8s nodes (cross-subnet) and bastion
+# tunnels can reach them; the security group is the access boundary.
+#
+# Future engines (cassandra, yugabyte) attach here under a compose profile.
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: oas-postgres
+    restart: unless-stopped
+    environment:
+      # Bootstrap superuser; per-app DBs/users are created by the init script.
+      POSTGRES_USER: ${POSTGRES_SUPER_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_SUPER_PASSWORD:?set in .env}
+      ACS_DB_PASSWORD: ${ACS_DB_PASSWORD:?set in .env}
+      OAS_DB_PASSWORD: ${OAS_DB_PASSWORD:?set in .env}
+      KONG_DB_PASSWORD: ${KONG_DB_PASSWORD:?set in .env}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_SUPER_USER:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  elasticsearch:
+    image: elasticsearch:8.13.0
+    container_name: oas-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    volumes:
+      - esdata:/usr/share/elasticsearch/data
+    ulimits:
+      memlock: { soft: -1, hard: -1 }
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: oas-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ── Admin GUIs (bastion-tunnel only; SG blocks the internet) ───────────────
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: oas-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@oas.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set in .env}
+      PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    volumes:
+      - ./gui/servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  kibana:
+    image: kibana:8.13.0
+    container_name: oas-kibana
+    restart: unless-stopped
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+
+  redisinsight:
+    image: redis/redisinsight:latest
+    container_name: oas-redisinsight
+    restart: unless-stopped
+    ports:
+      - "5540:5540"
+    depends_on:
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  esdata:
+  redisdata:

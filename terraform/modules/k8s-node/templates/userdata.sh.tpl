@@ -1,9 +1,14 @@
 #!/bin/bash
-# Bootstrapping script for OAS-Infra Single K8s Node
+# Bootstrapping script for OAS-Infra Single K8s Node (private subnet).
+# Egress is via the bastion NAT instance, which may not be ready at first boot,
+# so apt is retried.
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-apt-get update -y
+for i in $(seq 1 15); do
+  if apt-get update -y; then break; fi
+  echo "apt-get update failed (NAT not ready?), retry $i/15"; sleep 20
+done
 apt-get install -y curl gnupg lsb-release git ca-certificates unzip jq
 
 # 1. Install Docker & containerd
@@ -28,5 +33,8 @@ unzip awscliv2.zip
 ./aws/install
 rm -rf awscliv2.zip aws
 
-# 3. Local Path Provisioner directory
+# 3. Helm (the Jenkins deploy runs `helm upgrade` on this node over SSH)
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+# 4. Local Path Provisioner directory
 mkdir -p /opt/local-path-provisioner

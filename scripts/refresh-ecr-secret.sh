@@ -20,25 +20,19 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CONFIG_FILE="${REPO_ROOT}/service.config.yaml"
-
 SECRET_NAME="ecr-pull-secret"
 NAMESPACE="app"
 
-# Resolve region: instance metadata first, then service.config.yaml, then AWS_REGION.
-ECR_REGION="$(curl -s --max-time 2 http://169.254.169.254/latest/meta-data/placement/region || true)"
+# This runs ON the k8s node (host cron), so region comes from instance metadata
+# (IMDSv2), with AWS_REGION as a fallback.
+TOKEN="$(curl -s --max-time 2 -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60' || true)"
+ECR_REGION="$(curl -s --max-time 2 -H "X-aws-ec2-metadata-token: ${TOKEN}" http://169.254.169.254/latest/meta-data/placement/region || true)"
 if [ -z "${ECR_REGION}" ]; then
-  if command -v yq &>/dev/null && [ -f "${CONFIG_FILE}" ]; then
-    ECR_REGION="$(yq '.image.ecr_region' "${CONFIG_FILE}")"
-  else
-    ECR_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
-  fi
+  ECR_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
 fi
 
 if [ -z "${ECR_REGION}" ]; then
-  echo "ERROR: Could not determine AWS region (instance metadata, service.config.yaml, and AWS_REGION all empty)." >&2
+  echo "ERROR: Could not determine AWS region (instance metadata and AWS_REGION both empty)." >&2
   exit 1
 fi
 

@@ -1,0 +1,100 @@
+# Kong declarative config — DB-backed (synced with decK, OSS).
+#
+# RBAC model (see docs): apps have NO built-in auth, so Kong is the sole
+# enforcement point. Access is split by URL PATH, not HTTP method, because
+# `search` is a POST yet is a read operation.
+#
+#   read route  : ~/<prefixes>/v1/(read|search).*        -> acl allow [readers, editors]
+#   write route : ~/<prefixes>/v1/(create|draft|add|
+#                   approve|review|toggle|update|
+#                   delete|import).*                       -> acl allow [editors]
+#
+#   consumer  user       -> group readers            (read + search)
+#   consumer  admin       -> groups readers, editors  (full CRUD + search)
+#   consumer  superadmin  -> groups readers, editors  (+ key rotation, operational)
+#
+# API keys are NOT committed — decK resolves them from the environment at sync
+# time (kong/scripts/deck-sync.sh exports them from db-host/.env or Jenkins).
+# rate-limiting is provisioned but disabled (enabled: false) — flip on later.
+
+_format_version: "3.0"
+
+services:
+  - name: organisation-catalogue
+    url: http://organisation-catalogue.app.svc.cluster.local:8080
+    routes:
+      - name: organisation-catalogue-read
+        strip_path: false
+        paths:
+          - "~/(org|audit)/v1/(read|search).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["readers", "editors"]
+      - name: organisation-catalogue-write
+        strip_path: false
+        paths:
+          - "~/(org|audit)/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["editors"]
+    plugins:
+      - name: key-auth
+        config:
+          key_names: ["apikey"]
+      - name: rate-limiting
+        enabled: false
+        config:
+          minute: 600
+          policy: local
+
+  - name: agri-catalogue-service
+    url: http://catalogue-service.app.svc.cluster.local:8080
+    routes:
+      - name: agri-catalogue-read
+        strip_path: false
+        paths:
+          - "~/(seed|croptype|cropcategory|cropvariety|livestock|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(read|search).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["readers", "editors"]
+      - name: agri-catalogue-write
+        strip_path: false
+        paths:
+          - "~/(seed|croptype|cropcategory|cropvariety|livestock|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["editors"]
+    plugins:
+      - name: key-auth
+        config:
+          key_names: ["apikey"]
+      - name: rate-limiting
+        enabled: false
+        config:
+          minute: 600
+          policy: local
+
+consumers:
+  - username: user
+    keyauth_credentials:
+      - key: "${{ env \"OAS_USER_API_KEY\" }}"
+    acls:
+      - group: readers
+
+  - username: admin
+    keyauth_credentials:
+      - key: "${{ env \"OAS_ADMIN_API_KEY\" }}"
+    acls:
+      - group: readers
+      - group: editors
+
+  - username: superadmin
+    keyauth_credentials:
+      - key: "${{ env \"OAS_SUPERADMIN_API_KEY\" }}"
+    acls:
+      - group: readers
+      - group: editors
