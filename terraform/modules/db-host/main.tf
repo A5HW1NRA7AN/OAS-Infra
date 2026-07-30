@@ -56,9 +56,9 @@ resource "aws_security_group" "db_host" {
     security_groups = [var.bastion_sg_id]
   }
   ingress {
-    description     = "RedisInsight (5540) + Kibana (5601) from bastion only (SSH tunnel)"
+    description     = "GUIs from bastion only (SSH tunnel): RedisInsight 5540, Kibana 5601, Elasticvue 6060"
     from_port       = 5540
-    to_port         = 5601
+    to_port         = 6060
     protocol        = "tcp"
     security_groups = [var.bastion_sg_id]
   }

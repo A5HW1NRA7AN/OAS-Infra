@@ -44,6 +44,11 @@ services:
       - discovery.type=single-node
       - xpack.security.enabled=false
       - ES_JAVA_OPTS=-Xms1g -Xmx1g
+      # CORS so browser GUIs (Elasticvue) can query ES over the bastion tunnel.
+      - http.cors.enabled=true
+      - http.cors.allow-origin=*
+      - http.cors.allow-methods=OPTIONS,HEAD,GET,POST,PUT,DELETE
+      - http.cors.allow-headers=X-Requested-With,Content-Type,Content-Length,Authorization
     ports:
       - "9200:9200"
       - "9300:9300"
@@ -109,6 +114,18 @@ services:
     depends_on:
       redis:
         condition: service_healthy
+
+  # Elasticsearch browser GUI. Client-side SPA: your browser queries ES directly,
+  # so it uses the ES tunnel (http://localhost:9200) and relies on ES CORS (above).
+  # Pre-wired to that cluster via ELASTICVUE_CLUSTERS.
+  elasticvue:
+    image: cars10/elasticvue:latest
+    container_name: oas-elasticvue
+    restart: unless-stopped
+    ports:
+      - "6060:8080"
+    environment:
+      - ELASTICVUE_CLUSTERS=[{"name":"oas-es","uri":"http://localhost:9200"}]
 
 volumes:
   pgdata:
