@@ -173,9 +173,10 @@ pipeline {
                     sh """
                         set -e
                         # The node is private: reach it via the bastion using ProxyJump.
+                        # ProxyJump's value (ubuntu@<ip>) has no spaces, so it survives shell
+                        # word-splitting of \$SSH_OPTS — unlike an -o ProxyCommand="..." string.
                         # The bastion and node share the same key pair (ec2-deploy-key).
-                        PROXY="ssh -W %h:%p -i \${SSH_KEY} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null ${EC2_USER}@${params.BASTION_HOST}"
-                        SSH_OPTS="-i \${SSH_KEY} -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/dev/null -o ProxyCommand=\\"\$PROXY\\""
+                        SSH_OPTS="-i \${SSH_KEY} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ProxyJump=${EC2_USER}@${params.BASTION_HOST}"
                         NODE="${EC2_USER}@${params.NODE_PRIVATE_IP}"
 
                         # 1) Ensure the target namespace exists (idempotent).
