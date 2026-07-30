@@ -265,7 +265,7 @@ SSHEOF
             echo "Pipeline failed — check stage logs above for details."
         }
         success {
-            echo "Deployed image tag ${IMAGE_TAG} to ${params.EC2_HOST} successfully."
+            echo "Deployed ${params.SERVICE} image tag ${IMAGE_TAG} to node ${params.NODE_PRIVATE_IP} (via bastion ${params.BASTION_HOST}) successfully."
         }
     }
 }
