@@ -20,26 +20,30 @@ resource "aws_security_group" "db_host" {
   description = "DB host: DB ports from k8s nodes; SSH+GUIs from bastion only"
   vpc_id      = var.vpc_id
 
+  # DB ports: reachable from the k8s app nodes (the apps) AND the bastion
+  # (admins, via SSH tunnel — direct tools like psql/redis-cli + the Elasticvue
+  # browser extension pointed at localhost:9200). Same admin-via-bastion trust
+  # level as the GUIs below; never exposed to the internet.
   ingress {
-    description     = "PostgreSQL from k8s nodes"
+    description     = "PostgreSQL from k8s nodes + bastion"
     from_port       = 5432
     to_port         = 5432
     protocol        = "tcp"
-    security_groups = [var.k8s_node_sg_id]
+    security_groups = [var.k8s_node_sg_id, var.bastion_sg_id]
   }
   ingress {
-    description     = "Elasticsearch from k8s nodes"
+    description     = "Elasticsearch from k8s nodes + bastion"
     from_port       = 9200
     to_port         = 9200
     protocol        = "tcp"
-    security_groups = [var.k8s_node_sg_id]
+    security_groups = [var.k8s_node_sg_id, var.bastion_sg_id]
   }
   ingress {
-    description     = "Redis from k8s nodes"
+    description     = "Redis from k8s nodes + bastion"
     from_port       = 6379
     to_port         = 6379
     protocol        = "tcp"
-    security_groups = [var.k8s_node_sg_id]
+    security_groups = [var.k8s_node_sg_id, var.bastion_sg_id]
   }
   ingress {
     description     = "SSH from bastion only"
@@ -91,4 +95,10 @@ resource "aws_instance" "db_host" {
   }
 
   tags = { Name = "${var.name_prefix}-db-host" }
+
+  # Pin the AMI (see note in bastion-nat): AMI drift must NOT destroy this host —
+  # it holds all database data on its volume.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }

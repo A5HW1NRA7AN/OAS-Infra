@@ -25,6 +25,7 @@ resource "aws_instance" "k8s_node" {
   }
 
   lifecycle {
-    ignore_changes = [key_name]
+    # Pin the AMI (see bastion-nat): drift must not destroy the k8s node.
+    ignore_changes = [key_name, ami]
   }
 }

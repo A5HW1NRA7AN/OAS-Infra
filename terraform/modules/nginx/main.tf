@@ -57,6 +57,11 @@ resource "aws_instance" "nginx" {
   }
 
   tags = { Name = "${var.name_prefix}-nginx" }
+
+  # Pin the AMI (see bastion-nat): drift must not destroy/replace nginx.
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 # NOTE: No Elastic IP (account at EIP quota). Auto-assigned public IP is stable

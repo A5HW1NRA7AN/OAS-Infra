@@ -63,6 +63,13 @@ resource "aws_instance" "bastion" {
   }
 
   tags = { Name = "${var.name_prefix}-bastion" }
+
+  # Pin the AMI: `data.aws_ami { most_recent = true }` drifts to newer Ubuntu
+  # images over time; without this, a routine `terraform apply` would DESTROY and
+  # replace this instance (new IP, NAT re-setup — a full outage).
+  lifecycle {
+    ignore_changes = [ami]
+  }
 }
 
 # NOTE: No Elastic IP — the account is at its EIP quota. The auto-assigned public
