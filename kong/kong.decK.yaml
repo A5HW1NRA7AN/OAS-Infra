@@ -81,20 +81,20 @@ services:
 consumers:
   - username: user
     keyauth_credentials:
-      - key: "${{ env \"OAS_USER_API_KEY\" }}"
+      - key: '${{ env "DECK_OAS_USER_API_KEY" }}'
     acls:
       - group: readers
 
   - username: admin
     keyauth_credentials:
-      - key: "${{ env \"OAS_ADMIN_API_KEY\" }}"
+      - key: '${{ env "DECK_OAS_ADMIN_API_KEY" }}'
     acls:
       - group: readers
       - group: editors
 
   - username: superadmin
     keyauth_credentials:
-      - key: "${{ env \"OAS_SUPERADMIN_API_KEY\" }}"
+      - key: '${{ env "DECK_OAS_SUPERADMIN_API_KEY" }}'
     acls:
       - group: readers
       - group: editors

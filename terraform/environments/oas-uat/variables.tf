@@ -26,6 +26,12 @@ variable "admin_ssh_cidrs" {
   default     = ["0.0.0.0/0"] # TODO: restrict in terraform.tfvars
 }
 
+variable "ecr_instance_profile" {
+  description = "Pre-existing EC2 instance profile (name) granting ECR read for the k8s node. Managed outside this repo."
+  type        = string
+  default     = "EC2-ECR-Read-Role"
+}
+
 variable "db_host_private_ip" {
   description = "Fixed private IP for the DB host (must be inside data subnet azs[0], i.e. 10.0.10.0/24)."
   type        = string

@@ -54,10 +54,9 @@ module "network" {
   azs         = var.azs
 }
 
-module "iam" {
-  source      = "../../modules/iam"
-  name_prefix = var.name_prefix
-}
+# NOTE: IAM roles are managed OUT of this repo (the deploy IAM user cannot manage
+# IAM). We reuse the pre-existing instance profile `EC2-ECR-Read-Role` for ECR
+# pulls (var.ecr_instance_profile).
 
 module "bastion_nat" {
   source                 = "../../modules/bastion-nat"
@@ -82,7 +81,7 @@ module "k8s_node" {
   instance_type        = var.k8s_instance_type
   root_volume_size     = var.k8s_root_volume_size
   bastion_sg_id        = module.bastion_nat.security_group_id
-  iam_instance_profile = module.iam.instance_profile_name
+  iam_instance_profile = var.ecr_instance_profile
 }
 
 # Kong's NodePort (30080) on the k8s node, reachable ONLY from the nginx tier.

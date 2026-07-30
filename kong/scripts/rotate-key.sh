@@ -21,7 +21,8 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 ENV_DIR="${REPO_ROOT}/terraform/environments/oas-uat"
 KONG_ADMIN_SVC="${KONG_ADMIN_SVC:-kong-kong-admin}"
 KONG_ADMIN_NS="${KONG_ADMIN_NS:-platform}"
-KONG_ADMIN_PORT="${KONG_ADMIN_PORT:-8001}"
+# Kong Admin API is TLS on 8444 (ClusterIP, never public).
+KONG_ADMIN_PORT="${KONG_ADMIN_PORT:-8444}"
 ENV_VAR="OAS_$(echo "$CONSUMER" | tr '[:lower:]' '[:upper:]')_API_KEY"
 
 for c in ssh kubectl curl jq openssl; do command -v "$c" >/dev/null || { echo "ERROR: '$c' not found" >&2; exit 1; }; done
@@ -39,16 +40,16 @@ open_kube_tunnel 6443
 kubectl -n "$KONG_ADMIN_NS" port-forward "svc/${KONG_ADMIN_SVC}" "${KONG_ADMIN_PORT}:${KONG_ADMIN_PORT}" >/dev/null 2>&1 &
 PF_PID=$!
 sleep 4
-ADMIN="http://localhost:${KONG_ADMIN_PORT}"
+ADMIN="https://localhost:${KONG_ADMIN_PORT}"   # TLS admin; -k for the self-signed cert
 
 NEWKEY="$(openssl rand -hex 24)"
 
 # Delete existing key-auth credentials for the consumer, then add the new one.
 echo "Rotating key for consumer '${CONSUMER}'..."
-for id in $(curl -sf "${ADMIN}/consumers/${CONSUMER}/key-auth" | jq -r '.data[].id'); do
-  curl -sf -X DELETE "${ADMIN}/consumers/${CONSUMER}/key-auth/${id}" >/dev/null
+for id in $(curl -sk "${ADMIN}/consumers/${CONSUMER}/key-auth" | jq -r '.data[].id'); do
+  curl -sk -X DELETE "${ADMIN}/consumers/${CONSUMER}/key-auth/${id}" >/dev/null
 done
-curl -sf -X POST "${ADMIN}/consumers/${CONSUMER}/key-auth" --data "key=${NEWKEY}" >/dev/null
+curl -sk -X POST "${ADMIN}/consumers/${CONSUMER}/key-auth" --data "key=${NEWKEY}" >/dev/null
 
 # Keep kong/.env in sync so deck-sync.sh won't revert the rotation.
 ENVFILE="${REPO_ROOT}/kong/.env"

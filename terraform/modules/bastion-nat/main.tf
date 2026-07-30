@@ -65,11 +65,9 @@ resource "aws_instance" "bastion" {
   tags = { Name = "${var.name_prefix}-bastion" }
 }
 
-resource "aws_eip" "bastion" {
-  instance = aws_instance.bastion.id
-  domain   = "vpc"
-  tags     = { Name = "${var.name_prefix}-bastion-eip" }
-}
+# NOTE: No Elastic IP — the account is at its EIP quota. The auto-assigned public
+# IP is stable while the instance runs (only changes on stop/start), which is
+# fine for this UAT.
 
 # Private subnets reach the internet via the bastion NAT instance.
 resource "aws_route" "private_default" {

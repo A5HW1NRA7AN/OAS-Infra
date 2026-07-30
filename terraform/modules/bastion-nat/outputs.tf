@@ -1,6 +1,6 @@
 output "public_ip" {
-  description = "Bastion Elastic IP (SSH entry + ProxyJump host)."
-  value       = aws_eip.bastion.public_ip
+  description = "Bastion public IP (SSH entry + ProxyJump host). Auto-assigned (no EIP)."
+  value       = aws_instance.bastion.public_ip
 }
 
 output "private_ip" {

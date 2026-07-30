@@ -59,8 +59,5 @@ resource "aws_instance" "nginx" {
   tags = { Name = "${var.name_prefix}-nginx" }
 }
 
-resource "aws_eip" "nginx" {
-  instance = aws_instance.nginx.id
-  domain   = "vpc"
-  tags     = { Name = "${var.name_prefix}-nginx-eip" }
-}
+# NOTE: No Elastic IP (account at EIP quota). Auto-assigned public IP is stable
+# while running — the UAT base URL. Re-fetch it after any stop/start.

@@ -1,6 +1,6 @@
 output "public_ip" {
-  description = "nginx Elastic IP — the public base URL for the APIs (http://<this>/...)."
-  value       = aws_eip.nginx.public_ip
+  description = "nginx public IP — the public base URL for the APIs (http://<this>/...). Auto-assigned (no EIP)."
+  value       = aws_instance.nginx.public_ip
 }
 
 output "security_group_id" {
