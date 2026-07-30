@@ -236,7 +236,7 @@ SSHEOF
                 }
                 // Hit the app through the public nginx entrypoint + Kong (key-auth).
                 sh """
-                    [ -z "${params.SMOKE_API_KEY}" ] && exit 0
+                    if [ -z "${params.SMOKE_API_KEY}" ]; then echo "no smoke key; skipping"; exit 0; fi
                     for i in \$(seq 1 10); do
                         if curl -sf http://${params.NGINX_HOST}/${SMOKE_PREFIX}/v1/read/smoketest \\
                               -H "apikey: ${params.SMOKE_API_KEY}"; then
