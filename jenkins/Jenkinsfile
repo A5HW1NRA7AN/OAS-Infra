@@ -47,10 +47,10 @@ pipeline {
             defaultValue: '',
             description: 'nginx public IP (terraform output: nginx_public_ip) — used for the smoke test.'
         )
-        password(
+        string(
             name: 'SMOKE_API_KEY',
             defaultValue: '',
-            description: 'Optional: a Kong role API key to run the smoke test through nginx. Leave blank to skip.'
+            description: 'Optional: a Kong role API key to run the smoke test through nginx. Leave blank to skip. (UAT role key, not a secret.)'
         )
     }
 
