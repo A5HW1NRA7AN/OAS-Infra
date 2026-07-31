@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # setup-cluster.sh — orchestrates the OAS platform bootstrap for the new
-# VPC-based architecture (see docs/architecture.md).
+# VPC-based architecture (see docs/deployment-plan.md).
 #
 # Stages (run all, or a single one):
 #   terraform   Provision VPC + bastion/NAT + nginx + db-host + k8s-node.

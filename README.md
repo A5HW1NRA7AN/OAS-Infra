@@ -1,33 +1,32 @@
-# OAS-Infra — OAS Catalogue Platform (VPC edition)
+# OAS-Infra — OpenAgriStack Catalogues
 
-Infrastructure-as-code and deployment scaffolding for the **OAS catalogue services** (VERG
-registry framework: Spring Boot APIs backed by PostgreSQL, Redis, and Elasticsearch, fronted by
-the Kong API Gateway). Today it deploys `agri-catalogue` and `organisation-catalogue`, and is
-built so onboarding a new catalogue/service is a small, additive change.
+Infrastructure-as-code and deployment scaffolding for the **OAS catalogue services**
+OAS registry framework: Spring Boot APIs backed by PostgreSQL, Redis, and Elasticsearch,
+Kong API Gateway).
 
 ## Architecture
 
 A purpose-built VPC with one public tier and two private tiers. Databases run as **Docker
-containers on a dedicated host** (not Kubernetes); application services run as **Kubernetes pods**;
+containers on a dedicated host**; application services run as **Kubernetes pods**;
 Kong (DB-backed) enforces API-key auth and role-based access.
 
 ```
                          Internet
                             │  HTTP :80 (world)   SSH :22 (admin CIDR)
                      Internet Gateway
-   ┌──────────────────────────────────────────────────────────────┐ OAS VPC 10.0.0.0/16 (ap-northeast-1)
-   │  PUBLIC  10.0.0.0/24, 10.0.1.0/24                              │
-   │    • bastion + NAT instance (public IP)  — SSH jump host + private egress
-   │    • nginx reverse proxy (public IP)      — :80 → Kong NodePort :30080
-   │                                                                │
-   │  PRIVATE "app"  10.0.20.0/24, 10.0.21.0/24                     │
-   │    • Kubespray k8s node (private): catalogue pods + Kong (DB mode)
-   │                                                                │
-   │  PRIVATE "data" 10.0.10.0/24, 10.0.11.0/24                     │
-   │    • DB host EC2 @ 10.0.10.10 (docker-compose):
-   │        postgres:16 (acs_db, oas_db, kong) · elasticsearch:8.13 · redis:7
-   │        pgAdmin · Kibana · RedisInsight  (bastion-tunnel only)
-   └──────────────────────────────────────────────────────────────┘
+   ┌───────────────────────────────────────────────────────────────────────────┐ OAS VPC 10.0.0.0/16 (ap-northeast-1)
+   │  PUBLIC  10.0.0.0/24, 10.0.1.0/24                                         │
+   │    • bastion + NAT instance (public IP)  — SSH jump host + private egress │
+   │    • nginx reverse proxy (public IP)      — :80 → Kong NodePort :30080    │
+   │                                                                           │
+   │  PRIVATE "app"  10.0.20.0/24, 10.0.21.0/24                                │
+   │    • Kubespray k8s node (private): catalogue pods + Kong (DB mode)        │
+   │                                                                           │
+   │  PRIVATE "data" 10.0.10.0/24, 10.0.11.0/24                                │
+   │    • DB host EC2 @ 10.0.10.10 (docker-compose):                           │
+   │        postgres:16 (acs_db, oas_db, kong) · elasticsearch:8.13 · redis:7  │
+   │        pgAdmin · Kibana · RedisInsight  (bastion-tunnel only)             │
+   └───────────────────────────────────────────────────────────────────────────┘
    Private subnets egress via the bastion NAT. Jenkins (external) reaches the
    private node via SSH ProxyJump through the bastion.
 ```
@@ -36,9 +35,9 @@ Request path: `http://<nginx-ip>/<catalogue>/v1/... (apikey header)` → nginx �
 acl) → catalogue pod → DB host. The apps have **no built-in auth** — Kong is the sole enforcement
 point.
 
-### Key decisions (UAT)
-- **Databases as Docker on one EC2**, not k8s StatefulSets (which proved unreliable). One Postgres
-  with three databases; shared ES/Redis. Extensible to cassandra/yugabyte via compose profiles.
+### Deployment Style (UAT)
+- **Databases as Docker on one EC2**. 
+  One Postgres with three databases; shared ES/Redis. Extensible to cassandra/yugabyte via compose profiles.
 - **Kong OSS, DB-backed**, synced with **decK**. Three roles by API key + ACL group, split by URL
   path (because `search` is a POST yet a read): `user`=read+search, `admin`=+full CRUD,
   `superadmin`=admin+key rotation. Rate-limiting is provisioned but disabled. Key rotation is a
@@ -63,7 +62,8 @@ point.
 - [kong/kong.decK.yaml](kong/kong.decK.yaml) — services, read/write regex routes, key-auth+acl,
   rate-limiting(off), 3 consumers. [kong/scripts/](kong/scripts/) — `deck-sync.sh`, `rotate-key.sh`.
 - [services/](services/) — one source-of-truth config per service.
-- [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `lib/kube-tunnel.sh`.
+- [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `flush-databases.sh`
+  (wipe catalogue data for bulk re-ingest), `lib/kube-tunnel.sh`.
 - [jenkins/Jenkinsfile](jenkins/Jenkinsfile) — CI/CD (ProxyJump through the bastion). The Jenkins
   controller + JCasC live in the separate **Jenkins** repo.
 
