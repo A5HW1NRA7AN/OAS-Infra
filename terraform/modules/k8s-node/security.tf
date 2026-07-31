@@ -1,79 +1,63 @@
-# ── SSH Key (auto-generated) ──────────────────────────────────────────────────
-
-resource "tls_private_key" "oas_key" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "aws_key_pair" "oas_key_pair" {
-  key_name   = var.key_name
-  public_key = tls_private_key.oas_key.public_key_openssh
-}
-
-resource "local_sensitive_file" "private_key" {
-  content         = tls_private_key.oas_key.private_key_pem
-  filename        = "${path.root}/oas-key.pem"
-  file_permission = "0400"
-}
-
-# ── Security Group ────────────────────────────────────────────────────────────
+# Security group for the private k8s node. SG-to-SG references only — no
+# 0.0.0.0/0. SSH + Kubernetes API come from the bastion; Kong's NodePort is
+# reachable only from the nginx tier. Node-to-node traffic is allowed via self.
+#
+# IMPORTANT: rules are defined as STANDALONE aws_security_group_rule resources,
+# NOT inline `ingress` blocks. This is deliberate: the "Kong NodePort 30080 from
+# nginx" rule lives in the environment (a standalone rule, to avoid a k8s-node <->
+# nginx module dependency cycle). The AWS provider forbids mixing inline rules
+# with standalone rules on the same SG — inline blocks silently DELETE standalone
+# rules on every apply (this caused nginx->Kong 504s). Keeping ALL rules
+# standalone makes them coexist safely.
 
 resource "aws_security_group" "k8s_node_sg" {
   name        = "${var.cluster_name}-node-sg"
-  description = "Security group for OAS Pilot Single K8s Node"
+  description = "Private K8s node: SSH/API from bastion, node-to-node, egress via NAT"
   vpc_id      = var.vpc_id
-
-  # SSH Ingress
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_ssh_cidrs
-    description = "SSH Access"
-  }
-
-  # Kong Proxy Ingress (NodePort)
-  ingress {
-    from_port   = 30080
-    to_port     = 30080
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_kong_cidrs
-    description = "Kong Proxy Access"
-  }
-
-  # Management UIs (NodePort) — admin tooling, restricted to admin CIDRs (not consumers)
-  ingress {
-    from_port   = 30081
-    to_port     = 30084
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_ssh_cidrs
-    description = "Management UIs Access (pgAdmin, Elasticvue, RedisCommander, Elasticsearch)"
-  }
-
-  # Kubernetes API Ingress — restricted to admin CIDRs so local kubectl/helm can
-  # drive the cluster, without exposing the API server to the whole internet.
-  # Lock allowed_ssh_cidrs down to admin/Jenkins IPs in production.
-  ingress {
-    from_port   = 6443
-    to_port     = 6443
-    protocol    = "tcp"
-    cidr_blocks = var.allowed_ssh_cidrs
-    description = "Kubernetes API Access (admin CIDRs only)"
-  }
-
-  # Egress (All Traffic)
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
 
   lifecycle {
     create_before_destroy = true
   }
 
-  tags = {
-    Name = "${var.cluster_name}-node-sg"
-  }
+  tags = { Name = "${var.cluster_name}-node-sg" }
+}
+
+resource "aws_security_group_rule" "node_ssh_from_bastion" {
+  type                     = "ingress"
+  description              = "SSH from bastion"
+  from_port                = 22
+  to_port                  = 22
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.k8s_node_sg.id
+  source_security_group_id = var.bastion_sg_id
+}
+
+resource "aws_security_group_rule" "node_api_from_bastion" {
+  type                     = "ingress"
+  description              = "Kubernetes API (6443) from bastion (kubectl/helm via ProxyJump)"
+  from_port                = 6443
+  to_port                  = 6443
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.k8s_node_sg.id
+  source_security_group_id = var.bastion_sg_id
+}
+
+resource "aws_security_group_rule" "node_self" {
+  type              = "ingress"
+  description       = "Node-to-node (all) within the cluster"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  security_group_id = aws_security_group.k8s_node_sg.id
+  self              = true
+}
+
+resource "aws_security_group_rule" "node_egress_all" {
+  type              = "egress"
+  description       = "Egress (all) via the bastion NAT"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  security_group_id = aws_security_group.k8s_node_sg.id
+  cidr_blocks       = ["0.0.0.0/0"]
 }

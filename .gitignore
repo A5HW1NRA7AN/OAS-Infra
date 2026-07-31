@@ -62,3 +62,5 @@ demo/
 AGENTS.md
 CLAUDE.md
 docs/
+# Terraform plan files (transient)
+*.tfplan

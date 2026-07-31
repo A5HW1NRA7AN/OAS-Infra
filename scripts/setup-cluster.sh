@@ -1,155 +1,122 @@
-#!/bin/bash
-# setup-cluster.sh
-# Orchestrates the full cluster deployment: Terraform provisioning, Kubespray,
-# data services (PostgreSQL/Redis/Elasticsearch), and the Kong gateway.
+#!/usr/bin/env bash
+# setup-cluster.sh — orchestrates the OAS platform bootstrap for the new
+# VPC-based architecture (see docs/deployment-plan.md).
+#
+# Stages (run all, or a single one):
+#   terraform   Provision VPC + bastion/NAT + nginx + db-host + k8s-node.
+#   dbhost      Deliver db-host/ compose stack over the bastion and start it
+#               (Postgres[acs_db,oas_db,kong] + Elasticsearch + Redis + GUIs).
+#   kubespray   Install Kubernetes on the PRIVATE k8s node via the bastion.
+#   postinstall Namespaces, local-path, ECR pull secret; fetch kubeconfig.
+#   kong        Deploy Kong (DB mode, Postgres on the db-host) via Helm.
+#   deck        Sync kong/kong.decK.yaml (routes + RBAC consumers) via decK.
+#
+#   Usage:  scripts/setup-cluster.sh [stage]     (no stage = all, in order)
+#
+# Prereqs: terraform, helm, kubectl, ssh, scp, deck. db-host/.env and kong/.env
+# must exist (copy from the .example files). Application services (agri, org)
+# are deployed by Jenkins AFTER this, not here.
 set -euo pipefail
 
-if [ -z "${1:-}" ]; then
-  echo "Usage: $0 <environment>"
-  echo "Example: $0 agri-catalogue"
-  exit 1
-fi
-
-ENV_NAME="$1"
+STAGE="${1:-all}"
+ENV_NAME="oas-uat"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
-CONFIG_FILE="$REPO_ROOT/service.config.yaml"
-
-if [ ! -d "$ENV_DIR" ]; then
-  echo "Error: Environment directory not found at $ENV_DIR"
-  exit 1
-fi
-
-# --- Pre-flight: required tooling ---
-for cmd in terraform helm kubectl yq; do
-  if ! command -v "$cmd" &>/dev/null; then
-    echo "ERROR: '$cmd' is required but not found in PATH." >&2
-    exit 1
-  fi
-done
-
-# --- Read the single source of truth (never hardcode these here) ---
-DB_NAME="$(yq '.database.name' "$CONFIG_FILE")"
-DB_USER="$(yq '.database.username' "$CONFIG_FILE")"
-
-echo "=== OAS-Infra Cluster Setup ($ENV_NAME) ==="
-echo "    Database: $DB_NAME (user: $DB_USER)"
-echo ""
-echo "    Instance sizing is a Terraform variable. To use a larger node than the"
-echo "    t3.xlarge default (e.g. for heavier Elasticsearch/data workloads), set:"
-echo "        export TF_VAR_instance_type=t3.2xlarge"
-echo "    before running this script, or override in a *.tfvars file."
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Single-node capacity budget (t3.xlarge = 4 vCPU / 16 GB floor)
-# Tune these if you move to a larger instance. The goal is that no single
-# component starves another on the shared node.
-#
-#   Component        req mem / cpu     limit mem / cpu   notes
-#   ---------        ------------      ---------------   -----
-#   kube + system    ~2-3 Gi           (reserved)        etcd/apiserver/kubelet
-#   Elasticsearch    2 Gi / 500m       3 Gi / 1          heap pinned to 1 Gi
-#   PostgreSQL       512 Mi / 250m     1 Gi / 500m
-#   Redis            256 Mi / 100m     512 Mi / 250m
-#   Kong             256 Mi / 100m     512 Mi / 500m
-#   catalogue-app    512 Mi / 250m     1 Gi / 500m       (from service.config.yaml)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# 1. Provision EC2 node via Terraform
-echo ""
-echo "[Step 1] Provisioning K8s Node..."
-cd "$ENV_DIR"
-terraform init
-terraform apply -auto-approve
-
-# 2. Deploy Kubespray
-echo ""
-echo "[Step 2] Deploying Kubernetes via Kubespray..."
-cd "$REPO_ROOT"
-bash ./kubespray/deploy_kubespray.sh "$ENV_NAME"
-
-# 3. Post-install Config (Namespaces, StorageClass, ECR Secret)
-echo ""
-echo "[Step 3] Post-install Configuration..."
-bash ./kubespray/post_install.sh "$ENV_NAME"
-
-# Export kubeconfig to run helm/kubectl locally
 export KUBECONFIG="$REPO_ROOT/scratch_kubeconfig"
 
-# 4. Deploy Data Services (Bitnami Helm Charts)
+# shellcheck disable=SC1091
+[ -f "$ENV_DIR/env.sh" ] && source "$ENV_DIR/env.sh" || true
+# shellcheck disable=SC1091
+source "$REPO_ROOT/scripts/lib/kube-tunnel.sh"
+
+ssh_bastion() { ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "ubuntu@$BASTION_IP" "$@"; }
+ssh_via_bastion() { # ssh_via_bastion <private-ip> <cmd...>
+  local host="$1"; shift
+  ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ProxyCommand="ssh -W %h:%p -i $KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@$BASTION_IP" \
+      "ubuntu@$host" "$@"
+}
+
+stage_terraform() {
+  echo "== [terraform] provisioning VPC + all tiers =="
+  ( cd "$ENV_DIR" && terraform init && terraform apply -auto-approve )
+  # shellcheck disable=SC1091
+  source "$ENV_DIR/env.sh"
+  echo "bastion=$BASTION_IP nginx=$NGINX_IP node=$NODE_PRIVATE_IP db=$DB_HOST_IP"
+}
+
+stage_dbhost() {
+  echo "== [dbhost] delivering docker-compose stack to $DB_HOST_IP via bastion =="
+  [ -f "$REPO_ROOT/db-host/.env" ] || { echo "ERROR: create db-host/.env from db-host/.env.example" >&2; exit 1; }
+  # Copy the whole db-host/ dir (compose + init + gui + .env) through the bastion.
+  scp -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+      -o ProxyCommand="ssh -W %h:%p -i $KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@$BASTION_IP" \
+      -r "$REPO_ROOT/db-host" "ubuntu@$DB_HOST_IP:/opt/oas-db/"
+  ssh_via_bastion "$DB_HOST_IP" "cd /opt/oas-db/db-host && docker compose --env-file .env up -d && docker compose ps"
+}
+
+stage_kubespray() {
+  echo "== [kubespray] installing Kubernetes on the private node via bastion =="
+  bash "$REPO_ROOT/kubernetes/kubespray/deploy_kubespray.sh" "$ENV_NAME"
+}
+
+stage_postinstall() {
+  echo "== [postinstall] namespaces, storage, ECR secret, kubeconfig =="
+  bash "$REPO_ROOT/kubernetes/kubespray/post_install.sh" "$ENV_NAME"
+}
+
+stage_kong() {
+  echo "== [kong] deploying Kong (DB mode) via Helm =="
+  # shellcheck disable=SC1091
+  set -a; . "$REPO_ROOT/db-host/.env"; set +a   # KONG_DB_PASSWORD
+  helm repo add kong https://charts.konghq.com >/dev/null 2>&1 || true
+  helm repo update >/dev/null
+  open_kube_tunnel 6443; trap close_kube_tunnel RETURN
+  kubectl create namespace platform --dry-run=client -o yaml | kubectl apply -f -
+  helm upgrade --install kong kong/kong -n platform \
+    --set env.database=postgres \
+    --set env.pg_host="$DB_HOST_IP" \
+    --set env.pg_port=5432 \
+    --set env.pg_user=kong_user \
+    --set env.pg_password="$KONG_DB_PASSWORD" \
+    --set env.pg_database=kong \
+    --set proxy.type=NodePort \
+    --set proxy.http.nodePort=30080 \
+    --set admin.enabled=true \
+    --set admin.type=ClusterIP \
+    --set migrations.preUpgrade=true \
+    --set migrations.postUpgrade=true \
+    --wait --timeout 300s
+  echo "Kong deployed. Proxy NodePort 30080 (fronted by nginx at http://$NGINX_IP)."
+}
+
+stage_deck() {
+  echo "== [deck] syncing Kong routes + RBAC consumers =="
+  bash "$REPO_ROOT/kong/scripts/deck-sync.sh"
+}
+
+case "$STAGE" in
+  terraform)   stage_terraform ;;
+  dbhost)      stage_dbhost ;;
+  kubespray)   stage_kubespray ;;
+  postinstall) stage_postinstall ;;
+  kong)        stage_kong ;;
+  deck)        stage_deck ;;
+  all)
+    stage_terraform
+    stage_dbhost
+    stage_kubespray
+    stage_postinstall
+    stage_kong
+    stage_deck
+    ;;
+  *) echo "Usage: $0 [terraform|dbhost|kubespray|postinstall|kong|deck|all]" >&2; exit 1 ;;
+esac
+
 echo ""
-echo "[Step 4] Deploying Data Services (Postgres, Redis, Elasticsearch)..."
-helm repo add bitnami https://charts.bitnami.com/bitnami
-helm repo update
-
-# Prompt for Postgres password securely if not provided via env
-if [ -z "${PG_PASSWORD:-}" ]; then
-  read -s -p "Enter a password for PostgreSQL '$DB_USER': " PG_PASSWORD
-  echo ""
-fi
-
-kubectl create secret generic postgres-creds -n data \
-  --from-literal=username="$DB_USER" \
-  --from-literal=password="$PG_PASSWORD" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-helm upgrade --install postgres bitnami/postgresql -n data \
-  --set auth.existingSecret=postgres-creds \
-  --set auth.database="$DB_NAME" \
-  --set primary.persistence.size=20Gi \
-  --set primary.resources.requests.cpu=250m \
-  --set primary.resources.requests.memory=512Mi \
-  --set primary.resources.limits.cpu=500m \
-  --set primary.resources.limits.memory=1Gi
-
-helm upgrade --install redis bitnami/redis -n data \
-  --set architecture=standalone \
-  --set auth.enabled=false \
-  --set master.persistence.size=5Gi \
-  --set master.resources.requests.cpu=100m \
-  --set master.resources.requests.memory=256Mi \
-  --set master.resources.limits.cpu=250m \
-  --set master.resources.limits.memory=512Mi
-
-helm upgrade --install elasticsearch bitnami/elasticsearch -n data \
-  --set master.replicaCount=1 \
-  --set data.replicaCount=1 \
-  --set coordinating.replicaCount=0 \
-  --set ingest.replicaCount=0 \
-  --set security.enabled=false \
-  --set volumePermissions.enabled=true \
-  --set master.persistence.size=20Gi \
-  --set master.heapSize=1024m \
-  --set master.resources.requests.cpu=500m \
-  --set master.resources.requests.memory=2Gi \
-  --set master.resources.limits.cpu=1 \
-  --set master.resources.limits.memory=3Gi
-
-# 5. Kong Gateway
-echo ""
-echo "[Step 5] Deploying Kong API Gateway..."
-helm repo add kong https://charts.konghq.com
-helm repo update
-
-helm upgrade --install kong kong/kong -n platform \
-  --set env.database=off \
-  --set proxy.type=NodePort \
-  --set proxy.http.nodePort=30080 \
-  --set admin.enabled=true \
-  --set admin.type=ClusterIP
-
-echo ""
-echo "Next, render and apply the Kong declarative config:"
-echo "  1. Generate routes from the live app:   ./scripts/generate-kong-routes.sh"
-echo "  2. Render the UAT consumer + API key:   ./scripts/generate-kong-auth.sh"
-echo "  3. Apply as a ConfigMap:"
-echo "     kubectl create configmap kong-config -n platform \\"
-echo "       --from-file=kong.yml=kong/kong.yml -o yaml --dry-run=client | kubectl apply -f -"
-echo "     kubectl rollout restart deployment kong -n platform"
-echo "  (Rate limiting is intentionally OFF for UAT; auth is a single static key.)"
-
-echo ""
-echo "=== Setup Complete ==="
-echo "You can now run Jenkins locally or via jenkins/terraform to deploy the application."
+echo "=== setup-cluster ($STAGE) complete ==="
+echo "Next: run the Jenkins jobs (agri-catalogue-service, organisation-catalogue)"
+echo "to build/push/deploy the app pods (through the bastion). Then hand developers"
+echo "the base URL http://$NGINX_IP and their role API keys."

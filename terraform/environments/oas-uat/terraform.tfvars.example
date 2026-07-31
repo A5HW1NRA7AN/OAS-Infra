@@ -1,0 +1,15 @@
+# Copy to terraform.tfvars (gitignored) and adjust.
+# IMPORTANT: lock admin_ssh_cidrs to your admin/Jenkins public IPs — do not
+# leave the bastion's SSH open to the world.
+
+aws_region = "ap-northeast-1"
+name_prefix = "oas-uat"
+
+# e.g. ["203.0.113.10/32", "<jenkins-eip>/32"]
+admin_ssh_cidrs = ["0.0.0.0/0"]
+
+# Sizing (defaults shown)
+# bastion_instance_type = "t3.small"
+# nginx_instance_type   = "t3.small"
+# k8s_instance_type     = "t3.xlarge"
+# db_instance_type      = "t3.xlarge"
