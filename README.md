@@ -63,7 +63,8 @@ point.
 - [kong/kong.decK.yaml](kong/kong.decK.yaml) — services, read/write regex routes, key-auth+acl,
   rate-limiting(off), 3 consumers. [kong/scripts/](kong/scripts/) — `deck-sync.sh`, `rotate-key.sh`.
 - [services/](services/) — one source-of-truth config per service.
-- [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `lib/kube-tunnel.sh`.
+- [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `flush-databases.sh`
+  (wipe catalogue data for bulk re-ingest), `lib/kube-tunnel.sh`.
 - [jenkins/Jenkinsfile](jenkins/Jenkinsfile) — CI/CD (ProxyJump through the bastion). The Jenkins
   controller + JCasC live in the separate **Jenkins** repo.
 
