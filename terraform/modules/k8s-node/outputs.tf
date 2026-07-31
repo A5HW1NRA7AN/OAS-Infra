@@ -1,18 +1,13 @@
-
-
-output "node_public_ip" {
-  description = "The Public IP of the Kubernetes Node (Kong Entrypoint)"
-  value       = aws_instance.k8s_node.public_ip
-}
-
 output "node_private_ip" {
-  description = "The private IP of the Kubernetes Node"
+  description = "Private IP of the K8s node (reached via the bastion; Kong NodePort lives here)."
   value       = aws_instance.k8s_node.private_ip
 }
 
-output "ssh_connection_string" {
-  description = "SSH command to connect to the node"
-  value       = "ssh -i ./oas-key.pem ubuntu@${aws_instance.k8s_node.public_ip}"
+output "node_sg_id" {
+  description = "Security group id of the K8s node (env adds the nginx->30080 rule to it)."
+  value       = aws_security_group.k8s_node_sg.id
 }
 
-
+output "instance_id" {
+  value = aws_instance.k8s_node.id
+}

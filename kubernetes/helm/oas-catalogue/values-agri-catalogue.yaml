@@ -1,0 +1,20 @@
+# values-agri-catalogue.yaml — per-service overlay for agri-catalogue-service.
+# Derived from services/agri-catalogue.config.yaml. Passed to `helm upgrade`
+# with `-f` on top of the shared values.yaml. Regenerate via the
+# helm-chart-scaffolding skill — do not hand-edit.
+
+# Keeps the deployed resource name stable at `catalogue-service` (matches the
+# Kong upstream URL and the pre-existing release).
+fullnameOverride: catalogue-service
+
+secretName: catalogue-service-secrets
+
+# Data services live on the dedicated DB host (fixed private IP = terraform
+# var db_host_private_ip). Keep this in sync with terraform/environments/oas-uat.
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_DATASOURCE_URL: jdbc:postgresql://10.0.10.10:5432/acs_db
+  ELASTICSEARCH_HOST: "10.0.10.10"
+  ELASTICSEARCH_PORT: "9200"
+  SPRING_REDIS_HOST: "10.0.10.10"
+  SPRING_REDIS_PORT: "6379"

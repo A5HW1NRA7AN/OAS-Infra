@@ -1,6 +1,6 @@
 # Single source of truth for deployment scaffolding.
 # Edit THIS file when the application changes — never edit chart templates,
-# kong.yml service/route/consumer blocks, or Jenkinsfile values directly.
+# kong/kong.decK.yaml service/route/consumer blocks, or Jenkinsfile values directly.
 #
 # Nothing environment-specific (AWS account ID, node IP) or secret is stored
 # here. Those are derived at build/deploy time or injected as secrets.
@@ -49,8 +49,8 @@ resources:
 # the app agree on one value. SPRING_DATASOURCE_URL below must reference the
 # same database name.
 database:
-  name: oas_db
-  username: oas_user
+  name: acs_db
+  username: acs_user
 
 # API-gateway authentication for the UAT pilot.
 # NOTE: `api_key` is an intentionally static, NON-SECRET value for UAT only.
@@ -64,13 +64,13 @@ auth:
 
 env:
   MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
-  # Maps to Spring Boot relaxed-binding env vars — add/remove as the app's
-  # application.properties keys change. Values here are k8s Service DNS
-  # names, not secrets. The database name must match `database.name` above.
-  SPRING_DATASOURCE_URL: jdbc:postgresql://postgres-postgresql.data.svc.cluster.local:5432/oas_db
-  ELASTICSEARCH_HOST: elasticsearch.data.svc.cluster.local
+  # Maps to Spring Boot relaxed-binding env vars. Data services live on the
+  # dedicated DB host (fixed private IP = terraform var db_host_private_ip),
+  # NOT in-cluster. The database name must match `database.name` above.
+  SPRING_DATASOURCE_URL: jdbc:postgresql://10.0.10.10:5432/acs_db
+  ELASTICSEARCH_HOST: "10.0.10.10"
   ELASTICSEARCH_PORT: "9200"
-  SPRING_REDIS_HOST: redis-master.data.svc.cluster.local
+  SPRING_REDIS_HOST: "10.0.10.10"
   SPRING_REDIS_PORT: "6379"
 
 secrets:
@@ -79,7 +79,7 @@ secrets:
 helm:
   release_name: catalogue-service
   # Shared generic chart; per-service values file supplies env/secretName/fullnameOverride.
-  chart_path: helm/oas-catalogue
+  chart_path: kubernetes/helm/oas-catalogue
   values_file: values-agri-catalogue.yaml
 
 # Jenkins credential IDs the pipeline expects (the values live in Jenkins, not here):

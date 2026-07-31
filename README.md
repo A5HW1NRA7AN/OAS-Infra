@@ -1,217 +1,101 @@
-# OAS Catalogue Services — Infrastructure and Deployment
+# OAS-Infra — OAS Catalogue Platform (VPC edition)
 
-Infrastructure-as-code and deployment scaffolding for the **OAS catalogue services**
-(VERG registry framework) — Spring Boot registry APIs backed by PostgreSQL, Redis,
-and Elasticsearch, fronted by the Kong API Gateway. Today this scaffolding deploys
-`agri-catalogue` and `organisation-catalogue`.
-
-## Overview
-
-This repository provisions cloud infrastructure, bootstraps a single-node Kubernetes
-cluster, and deploys the application alongside its data services for a User Acceptance
-Testing (UAT) pilot. It is deliberately scoped to a working, reasonably secure pilot
-rather than a production-grade, highly available platform.
-
-The scaffolding is **service-parameterized**: each catalogue service has one config file
-under [services/](services/), its own Terraform environment under
-`terraform/environments/`, and its own Jenkins job. Each service runs on its **own**
-dedicated EC2 node/cluster (its own Kong + data services). Adding a service means adding a
-`services/<service>.config.yaml` and a `terraform/environments/<service>/` — the shared
-Helm chart, Kong scripts, and Jenkinsfile logic are reused unchanged.
-
-This repository handles **infrastructure and deployment only**. The application source
-code is maintained in separate repositories and evolves independently; this scaffolding
-is designed to adapt to new versions of the applications with minimal rework.
+Infrastructure-as-code and deployment scaffolding for the **OAS catalogue services** (VERG
+registry framework: Spring Boot APIs backed by PostgreSQL, Redis, and Elasticsearch, fronted by
+the Kong API Gateway). Today it deploys `agri-catalogue` and `organisation-catalogue`, and is
+built so onboarding a new catalogue/service is a small, additive change.
 
 ## Architecture
 
-A single AWS EC2 instance runs a single-node Kubernetes cluster (control-plane and
-worker on one host, provisioned with Kubespray). Only the Kong gateway is exposed
-externally, via a NodePort; the Kubernetes API server and all data-service ports remain
-private.
+A purpose-built VPC with one public tier and two private tiers. Databases run as **Docker
+containers on a dedicated host** (not Kubernetes); application services run as **Kubernetes pods**;
+Kong (DB-backed) enforces API-key auth and role-based access.
 
-```text
-                        Internet
-                           │
-                  AWS Security Group
-       (TCP 22: admin/Jenkins, TCP 30080: Kong proxy)
-                           │
-                 EC2 instance (single node)
-   ┌───────────────────────────────────────────────────────┐
-   │        Kubernetes (Kubespray, single node)            │
-   │                                                       │
-   │   namespace: platform                                 │
-   │     └── Kong  (NodePort :30080, DB-less) ────────────┐│
-   │                                                      ▼│
-   │   namespace: app                                      │
-   │     └── catalogue-service (ClusterIP :8080) ◄────────┘|
-   │              │                                        │
-   │   namespace: data                                     │
-   │     ├── postgresql    (ClusterIP :5432)               │
-   │     ├── redis         (ClusterIP :6379)               │
-   │     └── elasticsearch (ClusterIP :9200)               │ 
-   │                                                       │
-   │   storageClass: local-path (PVs on the node disk)     │
-   └───────────────────────────────────────────────────────┘
-
-   Jenkins ──build──▶ ECR ──(containerd pulls image)──▶ EC2
-           └──SSH──────────────────▶ helm upgrade on the node
+```
+                         Internet
+                            │  HTTP :80 (world)   SSH :22 (admin CIDR)
+                     Internet Gateway
+   ┌──────────────────────────────────────────────────────────────┐ OAS VPC 10.0.0.0/16 (ap-northeast-1)
+   │  PUBLIC  10.0.0.0/24, 10.0.1.0/24                              │
+   │    • bastion + NAT instance (public IP)  — SSH jump host + private egress
+   │    • nginx reverse proxy (public IP)      — :80 → Kong NodePort :30080
+   │                                                                │
+   │  PRIVATE "app"  10.0.20.0/24, 10.0.21.0/24                     │
+   │    • Kubespray k8s node (private): catalogue pods + Kong (DB mode)
+   │                                                                │
+   │  PRIVATE "data" 10.0.10.0/24, 10.0.11.0/24                     │
+   │    • DB host EC2 @ 10.0.10.10 (docker-compose):
+   │        postgres:16 (acs_db, oas_db, kong) · elasticsearch:8.13 · redis:7
+   │        pgAdmin · Kibana · RedisInsight  (bastion-tunnel only)
+   └──────────────────────────────────────────────────────────────┘
+   Private subnets egress via the bastion NAT. Jenkins (external) reaches the
+   private node via SSH ProxyJump through the bastion.
 ```
 
-Key characteristics:
+Request path: `http://<nginx-ip>/<catalogue>/v1/... (apikey header)` → nginx → Kong (key-auth +
+acl) → catalogue pod → DB host. The apps have **no built-in auth** — Kong is the sole enforcement
+point.
 
-- **Compute:** one EC2 node in `ap-northeast-1` (Tokyo). Instance size is a Terraform
-  variable (`instance_type`, default `t3.xlarge`) — increase it rather than forking the module.
-- **Namespaces:** `platform` (Kong), `data` (PostgreSQL, Redis, Elasticsearch), `app`
-  (the catalogue service). Each service has its own such cluster/environment.
-- **Data services** run in-cluster via Bitnami Helm charts (single replica each), not as
-  managed AWS services.
-- **Gateway:** Kong runs in DB-less/declarative mode, exposed on NodePort `30080` over
-  HTTP (no domain or TLS yet).
-- **Storage:** `local-path-provisioner`; persistent volumes live on the node's root disk.
-- **CI/CD:** Jenkins builds the image, pushes it to Amazon ECR, and deploys over SSH with
-  `helm upgrade`. The Kubernetes API server is never exposed to Jenkins or the internet.
+### Key decisions (UAT)
+- **Databases as Docker on one EC2**, not k8s StatefulSets (which proved unreliable). One Postgres
+  with three databases; shared ES/Redis. Extensible to cassandra/yugabyte via compose profiles.
+- **Kong OSS, DB-backed**, synced with **decK**. Three roles by API key + ACL group, split by URL
+  path (because `search` is a POST yet a read): `user`=read+search, `admin`=+full CRUD,
+  `superadmin`=admin+key rotation. Rate-limiting is provisioned but disabled. Key rotation is a
+  manual operator action against the private Admin API.
+- **HTTP-only on the nginx public IP** (no domain/TLS yet; EIPs skipped — the account is at its
+  Elastic IP quota, so bastion/nginx use auto-assigned public IPs that are stable while running).
+  Admin GUIs (and direct ES/PG/Redis) reachable only via a bastion SSH tunnel. Single-AZ / single
+  node, but subnets span 2 AZs for later scale-out.
+- **Local Terraform state** (gitignored) and **secrets in Jenkins creds + k8s Secrets + gitignored
+  `.env`** — no paid/AWS-proprietary services.
 
-## Repository Structure
+## Repository layout
+- [terraform/modules/](terraform/modules/) — `network`, `bastion-nat`, `nginx`, `db-host`,
+  `k8s-node`, `iam`.
+- [terraform/environments/oas-uat/](terraform/environments/oas-uat/) — composes the whole platform;
+  generates `env.sh` + `hosts_k8s.yaml` (gitignored).
+- [db-host/](db-host/) — the data tier's `docker-compose.yml`, `init/` (creates the 3 databases),
+  `gui/servers.json`, `.env.example`.
+- [kubernetes/helm/oas-catalogue/](kubernetes/helm/oas-catalogue/) — shared chart + per-service
+  `values-<service>.yaml`.
+- [kubernetes/kubespray/](kubernetes/kubespray/) — cluster bootstrap (bastion/ProxyJump aware).
+- [kong/kong.decK.yaml](kong/kong.decK.yaml) — services, read/write regex routes, key-auth+acl,
+  rate-limiting(off), 3 consumers. [kong/scripts/](kong/scripts/) — `deck-sync.sh`, `rotate-key.sh`.
+- [services/](services/) — one source-of-truth config per service.
+- [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `lib/kube-tunnel.sh`.
+- [jenkins/Jenkinsfile](jenkins/Jenkinsfile) — CI/CD (ProxyJump through the bastion). The Jenkins
+  controller + JCasC live in the separate **Jenkins** repo.
 
-- [services/](services/) — one config file per service (`<service>.config.yaml`), each the
-  single source of truth for that service's deployment configuration (ports, health paths,
-  image coordinates, database identity, auth, environment). Convention: the service name
-  matches its Terraform environment name.
-- [terraform/](terraform/) — reusable infrastructure module (`modules/k8s-node/`) and one
-  environment instantiation per service (`environments/agri-catalogue/`,
-  `environments/organisation-catalogue/`).
-- [helm/](helm/) — the shared, generic Helm chart (`oas-catalogue/`) plus one values overlay
-  per service (`values-<service>.yaml`).
-- [kong/](kong/) — the declarative Kong configuration, one file per service
-  (`<service>.yml`), generated by the scripts below.
-- [jenkins/](jenkins/) — the CI/CD pipeline definition (`Jenkinsfile`); one Jenkins job per
-  service, selected by the `SERVICE` build parameter.
-- [scripts/](scripts/) — operational scripts: cluster bootstrap, Kong route/auth generation,
-  and ECR token refresh.
-- [kubespray/](kubespray/) — Kubespray bootstrap and post-install scripts used by `setup-cluster.sh`.
-
-## Configuration
-
-`services/<service>.config.yaml` is the single source of truth for each service. When an
-application changes, edit **its config file** — never edit the Helm chart templates, the
-per-service `kong/<service>.yml` service/route/consumer blocks, or the `Jenkinsfile` values
-directly. The scripts, the Helm chart, and the pipeline all derive their values from it (or
-from the application's live `/v3/api-docs` output at deploy time).
-
-Nothing environment-specific or secret is stored in this repository:
-
-- The AWS account ID is derived at deploy time (`aws sts get-caller-identity`) and never hardcoded.
-- The target node IP is supplied to Jenkins as a build parameter (`terraform output node_public_ip`).
-- Database and Elasticsearch passwords and the SSH key are injected from Jenkins credentials
-  into a Kubernetes Secret at runtime.
-
-## Prerequisites
-
-- Terraform >= 1.5.0
-- AWS CLI, configured with credentials that can provision EC2 and read/write ECR
-- `kubectl`
-- Helm
-- `yq` (https://github.com/mikefarah/yq) — used by the bootstrap and Kong scripts
-- A Jenkins server for CI/CD (with the `ec2-deploy-key`, `DB_CREDENTIALS`, and
-  `ES_CREDENTIALS` credentials configured)
-
-## Getting Started
-
-### 1. Provision the infrastructure
-
-Restrict inbound access (SSH and the Kubernetes API are limited to admin/Jenkins CIDRs)
-and provision the EC2 node for the service (substitute `<service>`, e.g. `agri-catalogue`
-or `organisation-catalogue`):
+## Deploy (from scratch)
+Prereqs: `terraform`, `helm`, `kubectl`, `deck`, `ssh`; copy `db-host/.env.example`→`db-host/.env`,
+`kong/.env.example`→`kong/.env`, and `terraform/environments/oas-uat/terraform.tfvars.example`→
+`terraform.tfvars` (lock `admin_ssh_cidrs`). Then:
 
 ```bash
-cd terraform/environments/<service>
-terraform init
-terraform apply
+scripts/setup-cluster.sh              # terraform → dbhost → kubespray → postinstall → kong → deck
+# or run a single stage: scripts/setup-cluster.sh <terraform|dbhost|kubespray|postinstall|kong|deck>
 ```
 
-To use a larger node than the `t3.xlarge` default, set `TF_VAR_instance_type`
-(e.g. `export TF_VAR_instance_type=t3.2xlarge`) before applying.
+Then, per service, run its Jenkins job with `BASTION_HOST` / `NODE_PRIVATE_IP` / `NGINX_HOST` from
+`terraform output`. Hand developers the base URL `http://<nginx-ip>` and their role API key.
+(Reminder: the agri job's `SERVICE` value is `agri-catalogue`, not the job name.)
 
-### 2. Bootstrap the cluster
+Install `scripts/refresh-ecr-secret.sh` on the k8s node's cron (ECR tokens expire ~12h).
 
-The orchestrator installs Kubernetes via Kubespray and deploys the data services
-(PostgreSQL, Redis, Elasticsearch) and Kong with a documented single-node capacity budget:
+## Onboarding a new service
+1. `services/<svc>.config.yaml` — repo, port, DB name/user, resources, chart/values pointers.
+2. `kubernetes/helm/oas-catalogue/values-<svc>.yaml` — env → DB host, `secretName`, `fullnameOverride`.
+3. `kong/kong.decK.yaml` — add the service + its two regex routes (read vs write), then `deck-sync.sh`.
+4. `db-host/init/` — add its database + user; recreate/rerun on the DB host.
+5. Jenkins `casc.yaml` — a `pipelineJob('<svc>')` + a `db-password-<svc>` credential.
+No Terraform/VPC/cluster changes — the platform is already there.
 
-```bash
-./scripts/setup-cluster.sh <service>
-```
-
-The script prompts securely for the PostgreSQL password (or reads `PG_PASSWORD` from the
-environment) and reads the database name and user from `services/<service>.config.yaml`.
-
-### 3. Configure the API gateway
-
-Kong runs in DB-less declarative mode. Generate its configuration from the running
-application, then apply it. Routes are discovered from the live OpenAPI document; the
-consumer and API key are rendered from `services/<service>.config.yaml`:
-
-```bash
-export KUBECONFIG=$PWD/scratch_kubeconfig
-kubectl port-forward svc/<service> -n app 8080:8080 &
-
-./scripts/generate-kong-routes.sh <service> http://localhost:8080   # routes from /v3/api-docs
-./scripts/generate-kong-auth.sh <service>                           # UAT consumer + key-auth
-
-kubectl create configmap kong-config -n platform \
-  --from-file=kong.yml=kong/<service>.yml -o yaml --dry-run=client | kubectl apply -f -
-kubectl rollout restart deployment kong -n platform
-```
-
-### 4. Configure CI/CD
-
-Create a Pipeline job in Jenkins **per service** pointing to
-[jenkins/Jenkinsfile](jenkins/Jenkinsfile). Provide the `SERVICE` build parameter (e.g.
-`organisation-catalogue`) and the `EC2_HOST` parameter (from `terraform output
-node_public_ip`), and scope the `DB_CREDENTIALS`/`ES_CREDENTIALS`/`ec2-deploy-key`
-credentials to that job. On each run the pipeline:
-
-1. Loads configuration from `services/<SERVICE>.config.yaml` and derives the ECR repository URL.
-2. Checks out the application and builds its multi-stage Dockerfile (which compiles the
-   JAR), tags the image with the application commit SHA and `latest`, and pushes both to ECR.
-3. Injects database and Elasticsearch credentials into the `<service>-secrets`
-   Kubernetes Secret on the node.
-4. Runs `helm upgrade` over SSH (shared chart `helm/oas-catalogue` + the service's
-   `values-<service>.yaml`) to deploy the immutable SHA-tagged image.
-5. Executes a smoke test through Kong.
-
-## Operations
-
-- **ECR pull secret refresh:** ECR authentication tokens expire every 12 hours on a
-  self-managed cluster. Run [scripts/refresh-ecr-secret.sh](scripts/refresh-ecr-secret.sh)
-  on a schedule (a six-hourly host cron is recommended) to keep image pulls working.
-- **Rollback:** use `helm rollback <release> <revision> -n app` on the node to revert to a
-  previous release (the release name is `helm.release_name` in the service config, e.g.
-  `catalogue-service` or `organisation-catalogue`).
-- **Logs:** use `kubectl logs -n app deploy/<service>` (and the equivalent in the
-  `data` and `platform` namespaces) to inspect service output.
-
-## Security Notes
-
-This configuration targets a UAT pilot, and several controls are intentionally relaxed:
-
-- Kong uses `key-auth` with a **single static, non-secret API key** (`apikey` header) so
-  consumers can be onboarded without a full identity system. Rate limiting is deliberately off.
-- Traffic is HTTP only; there is no domain or TLS yet.
-- Secrets (database, Elasticsearch, SSH key) are injected at runtime and are never stored
-  in this repository. The Kubernetes API server is reachable only from admin CIDRs and is
-  never exposed to Jenkins or the public internet.
-
-Pre-production is expected to replace the static key with proper IAM/RBAC and to add TLS.
-
-## Scope and Roadmap
-
-The following are explicitly out of scope for the pilot and deferred by design:
-multi-node high availability, managed AWS data services (RDS/ElastiCache/OpenSearch),
-TLS and a public domain, Keycloak/OAuth identity, observability (Prometheus/Grafana),
-Elasticsearch security, and autoscaling. These are intentional pilot-scope decisions;
-each would be revisited as the service moves toward production.
+## Security notes (UAT)
+Static, non-secret role keys for now; `superadmin` key rotation is manual. Kong Admin API and the
+Kubernetes API are never public (reached via the bastion). Elasticsearch runs with security
+disabled **only** because it is not internet-reachable (SG-restricted to the k8s nodes and the
+bastion). Pre-prod would add TLS/domain, real IAM/RBAC, and rate-limiting enforcement.
 
 ## License
-
-Released under the MIT License. See [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE).

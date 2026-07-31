@@ -1,0 +1,75 @@
+# values.yaml — oas-catalogue (SHARED DEFAULTS)
+#
+# This is the generic chart shared by every OAS catalogue service. It holds only
+# values that are identical across services. Service-specific values (env,
+# secretName, fullnameOverride) live in a per-service overlay:
+#   helm/oas-catalogue/values-<service>.yaml
+# which is passed to `helm upgrade` with `-f` (see jenkins/Jenkinsfile).
+#
+# All values trace back to services/<service>.config.yaml. Edit that config
+# first, then regenerate the overlay via the helm-chart-scaffolding skill.
+
+replicaCount: 1
+
+image:
+  # repository is intentionally empty here: the full ECR URL is composed from
+  # the service config (ecr_repository_name + ecr_region) plus the account ID
+  # derived at deploy time, and injected by the Jenkins pipeline via
+  # `--set image.repository=...`. Never hardcode an account ID in this repo.
+  repository: ""
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ecr-pull-secret
+
+nameOverride: ""
+# fullnameOverride and secretName are set per-service in the overlay so each
+# service gets stable, distinct resource names and its own Secret.
+fullnameOverride: ""
+secretName: ""
+
+service:
+  type: ClusterIP
+  port: 8080
+
+health:
+  # A startupProbe gates liveness/readiness until the app has finished booting
+  # (JVM warmup + Hibernate ddl-auto schema creation + data-service connections).
+  # failureThreshold * periodSeconds = max first-boot window (~5 min here), after
+  # which liveness/readiness take over. This prevents the default 1s probe timeout
+  # from failing a healthy-but-slow first start (the cause of the helm --wait
+  # "context deadline exceeded" during the initial organisation-catalogue deploy).
+  startup:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 20
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 30
+  liveness:
+    path: /actuator/health/liveness
+    initialDelaySeconds: 0
+    periodSeconds: 15
+    timeoutSeconds: 5
+    failureThreshold: 3
+  readiness:
+    path: /actuator/health/readiness
+    initialDelaySeconds: 0
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: 500m
+    memory: 1Gi
+
+# Environment variables are service-specific — provided by the per-service
+# overlay (values-<service>.yaml). Empty here so the base chart carries no
+# one service's config.
+env: {}
+
+containerPort: 8080

@@ -1,57 +1,47 @@
-variable "aws_region" {
-  description = "AWS region"
+variable "cluster_name" {
+  description = "Prefix name for the node's resources."
   type        = string
-  default     = "ap-northeast-1"
+  default     = "oas-uat"
 }
 
 variable "vpc_id" {
-  description = "VPC ID where the node will be deployed"
+  description = "VPC ID."
   type        = string
 }
 
 variable "subnet_id" {
-  description = "Subnet ID where the node will be deployed"
+  description = "Private app-tier subnet the node lands in."
   type        = string
 }
 
-variable "cluster_name" {
-  description = "Prefix name for the resources"
+variable "ami_id" {
+  description = "Ubuntu 22.04 AMI id (provided by the environment)."
   type        = string
-  default     = "OAS-Pilot"
+}
+
+variable "key_name" {
+  description = "Name of the shared EC2 key pair (created by the environment)."
+  type        = string
 }
 
 variable "instance_type" {
-  description = "EC2 instance type for the Kubernetes Node"
+  description = "EC2 instance type for the K8s node."
   type        = string
   default     = "t3.xlarge"
 }
 
 variable "root_volume_size" {
-  description = "Size of the root EBS volume in GB"
+  description = "Root EBS volume size in GB (OS, images, local-path PVs)."
   type        = number
   default     = 150
 }
 
-variable "key_name" {
-  description = "Name for the auto-generated SSH key pair"
+variable "bastion_sg_id" {
+  description = "Bastion SG allowed to reach SSH (22) and the K8s API (6443)."
   type        = string
-  default     = "oas-pilot-key-pair"
-}
-
-variable "allowed_ssh_cidrs" {
-  description = "List of CIDR blocks to allow SSH (TCP 22) inbound. Restrict to Admin/Jenkins IPs."
-  type        = list(string)
-  default     = ["0.0.0.0/0"] # TODO: Restrict this to Jenkins and Admin IP
-}
-
-variable "allowed_kong_cidrs" {
-  description = "List of CIDR blocks to allow Kong Proxy (TCP 30080) inbound."
-  type        = list(string)
-  default     = ["0.0.0.0/0"]
 }
 
 variable "iam_instance_profile" {
-  description = "IAM Instance Profile to attach to the EC2 for ECR read access"
+  description = "Instance profile granting ECR read (from the iam module)."
   type        = string
-  default     = "EC2-ECR-Read-Role"
 }

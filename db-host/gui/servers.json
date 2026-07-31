@@ -1,0 +1,14 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "OAS Postgres (all DBs)",
+      "Group": "OAS",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "postgres",
+      "Username": "postgres",
+      "SSLMode": "prefer",
+      "Comment": "acs_db (agri), oas_db (organisation), kong (gateway) live on this instance"
+    }
+  }
+}
