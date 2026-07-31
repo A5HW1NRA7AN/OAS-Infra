@@ -47,6 +47,27 @@ ssh_node 'bash -s' <<'EOF'
       --docker-username=AWS \
       --docker-password="${ECR_TOKEN}" \
       --dry-run=client -o yaml | kubectl apply -f -
+
+  echo "=> Installing ecr-pull-secret refresh cron (ECR tokens expire ~12h; load-bearing)..."
+  cat > /home/ubuntu/refresh-ecr-secret.sh <<'REFRESH'
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH=/usr/local/bin:/usr/bin:/bin
+export KUBECONFIG=/home/ubuntu/.kube/config
+REGION=$(curl -s --max-time 3 http://169.254.169.254/latest/meta-data/placement/region)
+ACCT=$(aws sts get-caller-identity --query Account --output text)
+REG="$ACCT.dkr.ecr.$REGION.amazonaws.com"
+TOKEN=$(aws ecr get-login-password --region "$REGION")
+kubectl create secret docker-registry ecr-pull-secret -n app \
+  --docker-server="$REG" --docker-username=AWS --docker-password="$TOKEN" \
+  --dry-run=client -o yaml | kubectl apply -f -
+echo "[$(date -u +%FT%TZ)] ecr-pull-secret refreshed"
+REFRESH
+  chmod +x /home/ubuntu/refresh-ecr-secret.sh
+  # every 6h, idempotent (replace any prior entry)
+  ( crontab -l 2>/dev/null | grep -v refresh-ecr-secret; \
+    echo "0 */6 * * * /home/ubuntu/refresh-ecr-secret.sh >> /home/ubuntu/ecr-refresh.log 2>&1" ) | crontab -
+
   echo "=> Post-install on node complete."
 EOF
 
