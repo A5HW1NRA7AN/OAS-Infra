@@ -1,4 +1,4 @@
-# OAS-Infra — OAS Catalogue Platform
+# OAS-Infra — OpenAgriStack Catalogues
 
 Infrastructure-as-code and deployment scaffolding for the **OAS catalogue services**
 OAS registry framework: Spring Boot APIs backed by PostgreSQL, Redis, and Elasticsearch,
