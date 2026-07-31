@@ -1,6 +1,6 @@
 # Single source of truth for deployment scaffolding — organisation-catalogue.
 # Edit THIS file when the application changes — never edit chart templates,
-# kong.yml service/route/consumer blocks, or Jenkinsfile values directly.
+# kong/kong.decK.yaml service/route/consumer blocks, or Jenkinsfile values directly.
 #
 # Nothing environment-specific (AWS account ID, node IP) or secret is stored
 # here. Those are derived at build/deploy time or injected as secrets.

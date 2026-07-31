@@ -17,8 +17,8 @@ Kong (DB-backed) enforces API-key auth and role-based access.
                      Internet Gateway
    ┌──────────────────────────────────────────────────────────────┐ OAS VPC 10.0.0.0/16 (ap-northeast-1)
    │  PUBLIC  10.0.0.0/24, 10.0.1.0/24                              │
-   │    • bastion + NAT instance (EIP)  — SSH jump host + private egress
-   │    • nginx reverse proxy (EIP)     — :80 → Kong NodePort :30080
+   │    • bastion + NAT instance (public IP)  — SSH jump host + private egress
+   │    • nginx reverse proxy (public IP)      — :80 → Kong NodePort :30080
    │                                                                │
    │  PRIVATE "app"  10.0.20.0/24, 10.0.21.0/24                     │
    │    • Kubespray k8s node (private): catalogue pods + Kong (DB mode)
@@ -32,7 +32,7 @@ Kong (DB-backed) enforces API-key auth and role-based access.
    private node via SSH ProxyJump through the bastion.
 ```
 
-Request path: `http://<nginx-EIP>/<catalogue>/v1/... (apikey header)` → nginx → Kong (key-auth +
+Request path: `http://<nginx-ip>/<catalogue>/v1/... (apikey header)` → nginx → Kong (key-auth +
 acl) → catalogue pod → DB host. The apps have **no built-in auth** — Kong is the sole enforcement
 point.
 
@@ -43,8 +43,10 @@ point.
   path (because `search` is a POST yet a read): `user`=read+search, `admin`=+full CRUD,
   `superadmin`=admin+key rotation. Rate-limiting is provisioned but disabled. Key rotation is a
   manual operator action against the private Admin API.
-- **HTTP-only on an Elastic IP** (no domain/TLS yet). Admin GUIs reachable only via a bastion SSH
-  tunnel. Single-AZ / single node, but subnets span 2 AZs for later scale-out.
+- **HTTP-only on the nginx public IP** (no domain/TLS yet; EIPs skipped — the account is at its
+  Elastic IP quota, so bastion/nginx use auto-assigned public IPs that are stable while running).
+  Admin GUIs (and direct ES/PG/Redis) reachable only via a bastion SSH tunnel. Single-AZ / single
+  node, but subnets span 2 AZs for later scale-out.
 - **Local Terraform state** (gitignored) and **secrets in Jenkins creds + k8s Secrets + gitignored
   `.env`** — no paid/AWS-proprietary services.
 
@@ -76,7 +78,8 @@ scripts/setup-cluster.sh              # terraform → dbhost → kubespray → p
 ```
 
 Then, per service, run its Jenkins job with `BASTION_HOST` / `NODE_PRIVATE_IP` / `NGINX_HOST` from
-`terraform output`. Hand developers the base URL `http://<nginx-EIP>` and their role API key.
+`terraform output`. Hand developers the base URL `http://<nginx-ip>` and their role API key.
+(Reminder: the agri job's `SERVICE` value is `agri-catalogue`, not the job name.)
 
 Install `scripts/refresh-ecr-secret.sh` on the k8s node's cron (ECR tokens expire ~12h).
 
@@ -91,8 +94,8 @@ No Terraform/VPC/cluster changes — the platform is already there.
 ## Security notes (UAT)
 Static, non-secret role keys for now; `superadmin` key rotation is manual. Kong Admin API and the
 Kubernetes API are never public (reached via the bastion). Elasticsearch runs with security
-disabled **only** because it is not internet-reachable (SG-restricted to the k8s nodes). Pre-prod
-would add TLS/domain, real IAM/RBAC, and rate-limiting enforcement.
+disabled **only** because it is not internet-reachable (SG-restricted to the k8s nodes and the
+bastion). Pre-prod would add TLS/domain, real IAM/RBAC, and rate-limiting enforcement.
 
 ## License
 MIT — see [LICENSE](LICENSE).
