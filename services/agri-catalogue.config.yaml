@@ -34,7 +34,7 @@ openapi:
   base_url_in_cluster: http://catalogue-service.app.svc.cluster.local:8080
 
 routing:
-  smoke_test_prefix: cropcategory   # used by jenkins-pipeline-sync; update if this domain is ever removed
+  smoke_test_prefix: cropcategory   # Jenkins smoke test hits /<prefix>/v1/read/smoketest; update if this domain is ever removed
 
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
