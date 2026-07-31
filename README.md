@@ -35,7 +35,7 @@ Request path: `http://<nginx-ip>/<catalogue>/v1/... (apikey header)` → nginx �
 acl) → catalogue pod → DB host. The apps have **no built-in auth** — Kong is the sole enforcement
 point.
 
-### Key decisions (UAT)
+### Deployment Style (UAT)
 - **Databases as Docker on one EC2**. 
   One Postgres with three databases; shared ES/Redis. Extensible to cassandra/yugabyte via compose profiles.
 - **Kong OSS, DB-backed**, synced with **decK**. Three roles by API key + ACL group, split by URL
