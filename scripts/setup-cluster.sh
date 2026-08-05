@@ -117,6 +117,6 @@ esac
 
 echo ""
 echo "=== setup-cluster ($STAGE) complete ==="
-echo "Next: run the Jenkins jobs (agri-catalogue-service, organisation-catalogue)"
+echo "Next: run the Jenkins jobs (agri-catalogue-service, org-user-notification-services)"
 echo "to build/push/deploy the app pods (through the bastion). Then hand developers"
 echo "the base URL http://$NGINX_IP and their role API keys."

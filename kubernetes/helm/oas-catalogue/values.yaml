@@ -39,7 +39,7 @@ health:
   # failureThreshold * periodSeconds = max first-boot window (~5 min here), after
   # which liveness/readiness take over. This prevents the default 1s probe timeout
   # from failing a healthy-but-slow first start (the cause of the helm --wait
-  # "context deadline exceeded" during the initial organisation-catalogue deploy).
+  # "context deadline exceeded" during the initial org-user-notification-services deploy).
   startup:
     path: /actuator/health/readiness
     initialDelaySeconds: 20

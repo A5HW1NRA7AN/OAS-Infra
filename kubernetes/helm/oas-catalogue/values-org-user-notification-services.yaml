@@ -1,13 +1,13 @@
-# values-organisation-catalogue.yaml — per-service overlay for organisation-catalogue.
-# Derived from services/organisation-catalogue.config.yaml. Passed to
+# values-org-user-notification-services.yaml — per-service overlay for org-user-notification-services.
+# Derived from services/org-user-notification-services.config.yaml. Passed to
 # `helm upgrade` with `-f` on top of the shared values.yaml. Regenerate via the
 # helm-chart-scaffolding skill — do not hand-edit.
 
-# Sets the deployed resource name to `organisation-catalogue` (matches the Kong
-# upstream URL organisation-catalogue.app.svc.cluster.local).
-fullnameOverride: organisation-catalogue
+# Sets the deployed resource name to `org-user-notification-services` (matches the Kong
+# upstream URL org-user-notification-services.app.svc.cluster.local).
+fullnameOverride: org-user-notification-services
 
-secretName: organisation-catalogue-secrets
+secretName: org-user-notification-services-secrets
 
 # Data services live on the dedicated DB host (fixed private IP = terraform
 # var db_host_private_ip). Keep this in sync with terraform/environments/oas-uat.

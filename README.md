@@ -77,9 +77,11 @@ scripts/setup-cluster.sh              # terraform → dbhost → kubespray → p
 # or run a single stage: scripts/setup-cluster.sh <terraform|dbhost|kubespray|postinstall|kong|deck>
 ```
 
-Then, per service, run its Jenkins job with `BASTION_HOST` / `NODE_PRIVATE_IP` / `NGINX_HOST` from
-`terraform output`. Hand developers the base URL `http://<nginx-ip>` and their role API key.
-(Reminder: the agri job's `SERVICE` value is `agri-catalogue`, not the job name.)
+Then, per service, just press **Build** on its Jenkins job — no parameters. The pipeline derives the
+service from the job name and auto-discovers the bastion/node/nginx IPs from the EC2 tags
+(`oas-uat-bastion` / `-K8s-Node` / `-nginx`) via `aws-credentials` (needs `ec2:DescribeInstances`); the
+smoke-test key comes from the service config. Hand developers the base URL `http://<nginx-ip>` and their
+role API key.
 
 Install `scripts/refresh-ecr-secret.sh` on the k8s node's cron (ECR tokens expire ~12h).
 
@@ -90,6 +92,47 @@ Install `scripts/refresh-ecr-secret.sh` on the k8s node's cron (ECR tokens expir
 4. `db-host/init/` — add its database + user; recreate/rerun on the DB host.
 5. Jenkins `casc.yaml` — a `pipelineJob('<svc>')` + a `db-password-<svc>` credential.
 No Terraform/VPC/cluster changes — the platform is already there.
+
+## Developer access (DB GUIs + k8s logs)
+Everything data-plane is private; developers reach it through the **bastion** (key-only SSH — no IP
+allow-listing). The operator hands a developer: the SSH key `oas-key.pem`, the current bastion IP
+(`terraform -chdir=terraform/environments/oas-uat output -raw bastion_public_ip`), and — for k8s —
+the cluster kubeconfig (`scratch_kubeconfig`). No addresses are hardcoded here; the scripts derive the
+bastion IP from `terraform output`, or the developer passes `BASTION=<ip>`.
+
+### Database GUIs & clients — `scripts/db-tunnels.sh` (share with any developer)
+Standalone: needs only the script + `oas-key.pem` in one folder. Opens local tunnels to the DB
+host's GUIs/ports:
+```bash
+./db-tunnels.sh <bastion-public-ip>    # keep open; Ctrl-C to close
+```
+| Tool | Open on your machine |
+|---|---|
+| pgAdmin (Postgres) | `http://localhost:5050` (server "OAS Postgres" pre-registered) |
+| Kibana (Elasticsearch) | `http://localhost:5601` |
+| Elasticvue (Elasticsearch) | browser extension → add cluster `http://localhost:9200` |
+| RedisInsight (Redis) | `http://localhost:5540` → add DB host `redis`, port `6379`, no auth |
+| Postgres client (psql / DBeaver) | `localhost:5432` |
+| Redis client (redis-cli) | `localhost:6379` |
+
+### Kubernetes logs — `scripts/kube-access.sh` (share ONLY with a trusted teammate)
+Standalone: needs the script + `oas-key.pem` + `oas-kubeconfig` in one folder. Tunnels to the private
+API and drops you into a shell where `kubectl` works. The kubeconfig is **admin-level** — share it
+securely and only with someone who should have full cluster access:
+```bash
+./kube-access.sh <bastion-public-ip>   # exit the shell to close the tunnel
+```
+Common debug commands (all namespaces):
+```bash
+kubectl get pods -A
+kubectl logs -n app deploy/catalogue-service --tail=200        # agri (+ audit) app logs
+kubectl logs -n app deploy/org-user-notification-services --tail=200   # org app logs
+kubectl logs -n app deploy/catalogue-service -f                # follow live
+kubectl logs -n app <pod> --previous                           # a crashed container's last logs
+kubectl describe pod -n app <pod>                              # events: ImagePull / OOM / probe fails
+kubectl get events -n app --sort-by=.lastTimestamp | tail -20
+kubectl logs -n platform deploy/kong-kong --tail=100           # gateway: routing / auth issues
+```
 
 ## Security notes (UAT)
 Static, non-secret role keys for now; `superadmin` key rotation is manual. Kong Admin API and the
