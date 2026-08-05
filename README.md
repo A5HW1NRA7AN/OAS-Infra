@@ -77,9 +77,11 @@ scripts/setup-cluster.sh              # terraform → dbhost → kubespray → p
 # or run a single stage: scripts/setup-cluster.sh <terraform|dbhost|kubespray|postinstall|kong|deck>
 ```
 
-Then, per service, run its Jenkins job with `BASTION_HOST` / `NODE_PRIVATE_IP` / `NGINX_HOST` from
-`terraform output`. Hand developers the base URL `http://<nginx-ip>` and their role API key.
-(Reminder: the agri job's `SERVICE` value is `agri-catalogue`, not the job name.)
+Then, per service, just press **Build** on its Jenkins job — no parameters. The pipeline derives the
+service from the job name and auto-discovers the bastion/node/nginx IPs from the EC2 tags
+(`oas-uat-bastion` / `-K8s-Node` / `-nginx`) via `aws-credentials` (needs `ec2:DescribeInstances`); the
+smoke-test key comes from the service config. Hand developers the base URL `http://<nginx-ip>` and their
+role API key.
 
 Install `scripts/refresh-ecr-secret.sh` on the k8s node's cron (ECR tokens expire ~12h).
 
