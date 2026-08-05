@@ -12,8 +12,10 @@
 //   * BASTION_HOST / NODE_PRIVATE_IP / NGINX_HOST — discovered from the EC2
 //     Name tags (<NAME_PREFIX>-bastion / -K8s-Node / -nginx) using aws-credentials,
 //     so restarts that change public IPs (no EIP) need no re-typing.
-//   * SMOKE_API_KEY — read from the service config (auth.api_key, UAT non-secret).
-// To onboard a service: add one SERVICE_BY_JOB entry + a pipelineJob in casc.yaml.
+// The deploy is gated by `helm --wait` (pod readiness). End-to-end verification
+// through nginx+Kong is a manual step after deck-sync (real Kong keys live in
+// kong/.env, not in this repo). To onboard a service: add one SERVICE_BY_JOB
+// entry + a pipelineJob in casc.yaml.
 //
 // Design notes:
 //   * The image tag is the APPLICATION commit SHA (captured from ./app), NOT
@@ -70,8 +72,6 @@ pipeline {
                     env.HELM_VALUES     = cfg('values_file')     // e.g. values-agri-catalogue.yaml
                     env.APP_NAMESPACE   = cfg('namespace')
                     env.SECRET_NAME     = cfg('secret_name')     // <service>-secrets
-                    env.SMOKE_PREFIX    = cfg('smoke_test_prefix')
-                    env.SMOKE_API_KEY   = cfg('api_key')         // UAT role key (non-secret)
                     // DB username is non-secret (from config); the password comes from a
                     // per-service Jenkins secret 'db-password-<SERVICE>' (users differ:
                     // acs_user vs oas_user, so a single global credential can't serve both).
@@ -113,7 +113,7 @@ pipeline {
 
                     echo "Service       : ${env.SERVICE}"
                     echo "Deploy target : ${env.NODE_PRIVATE_IP} via bastion ${env.BASTION_HOST}"
-                    echo "nginx (smoke) : ${env.NGINX_HOST}"
+                    echo "nginx public  : ${env.NGINX_HOST}"
                     echo "ECR repository: ${env.ECR_REPO}"
                     echo "Helm release  : ${env.HELM_RELEASE} (ns: ${env.APP_NAMESPACE})"
                     echo "Helm chart    : ${env.HELM_CHART} (-f ${env.HELM_VALUES})"
@@ -225,31 +225,10 @@ SSHEOF
             }
         }
 
-        stage('Smoke Test') {
-            steps {
-                script {
-                    if (!env.SMOKE_API_KEY?.trim() || !env.NGINX_HOST?.trim() || env.NGINX_HOST == 'None') {
-                        echo "Smoke key or nginx host unavailable — skipping the through-Kong smoke test. " +
-                             "(helm --wait already gated on pod readiness.)"
-                    } else {
-                        // Hit the app through the public nginx entrypoint + Kong (key-auth).
-                        sh """
-                            for i in \$(seq 1 10); do
-                                if curl -sf http://${env.NGINX_HOST}/${env.SMOKE_PREFIX}/v1/read/smoketest \\
-                                      -H "apikey: ${env.SMOKE_API_KEY}"; then
-                                    echo "Smoke test passed."
-                                    exit 0
-                                fi
-                                echo "Smoke test attempt \$i failed; retrying in 15s..."
-                                sleep 15
-                            done
-                            echo "Smoke test failed after retries."
-                            exit 1
-                        """
-                    }
-                }
-            }
-        }
+        // No in-pipeline smoke test: `helm --wait` already gates on pod readiness
+        // (liveness/readiness probes = app up + DB/ES/Redis reachable). End-to-end
+        // verification through nginx+Kong is a manual post-deck-sync step (needs a
+        // real Kong role key from kong/.env) — see the README deploy section.
     }
 
     post {
