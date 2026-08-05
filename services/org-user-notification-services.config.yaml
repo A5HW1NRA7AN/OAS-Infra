@@ -1,23 +1,23 @@
-# Single source of truth for deployment scaffolding — organisation-catalogue.
+# Single source of truth for deployment scaffolding — org-user-notification-services.
 # Edit THIS file when the application changes — never edit chart templates,
 # kong/kong.decK.yaml service/route/consumer blocks, or Jenkinsfile values directly.
 #
 # Nothing environment-specific (AWS account ID, node IP) or secret is stored
 # here. Those are derived at build/deploy time or injected as secrets.
 #
-# organisation-catalogue runs on its OWN dedicated EC2 environment
-# (terraform/environments/organisation-catalogue) with its own Kong + data
-# services — it is NOT co-located with agri-catalogue.
+# org-user-notification-services (formerly organisation-catalogue) is co-located
+# with agri-catalogue on the shared k8s node, sharing one Kong and one DB host.
+# It serves the /org and /user catalogues.
 
 service:
-  name: organisation-catalogue
+  name: org-user-notification-services
   namespace: app
   container_port: 8080
 
 # Application source repo. The pipeline checks this out to build the image.
 # Edit here when the app repo moves — never hardcode it in the Jenkinsfile.
 app_repo:
-  url: https://github.com/Open-Agri-Stack/organisation-catalogue.git
+  url: https://github.com/Open-Agri-Stack/OrgUserNotificationServices.git
   branch: main
 
 image:
@@ -28,8 +28,8 @@ image:
   #
   # DISTINCT from agri's `service-catalogue` repo so the two services' images
   # never collide. Create it once: aws ecr create-repository
-  #   --repository-name organisation-catalogue --region ap-northeast-1
-  ecr_repository_name: organisation-catalogue
+  #   --repository-name org-user-notification-services --region ap-northeast-1
+  ecr_repository_name: org-user-notification-services
   ecr_region: ap-northeast-1
   tag: latest
 
@@ -39,12 +39,12 @@ health:
 
 openapi:
   docs_path: /v3/api-docs
-  base_url_in_cluster: http://organisation-catalogue.app.svc.cluster.local:8080
+  base_url_in_cluster: http://org-user-notification-services.app.svc.cluster.local:8080
 
 routing:
-  # organisation-catalogue exposes /org/v1/... and /audit/v1/... — the smoke
-  # test hits {prefix}/v1/read/smoketest. Confirm /org/v1/read/smoketest exists
-  # against the live /v3/api-docs during onboarding; adjust if the path differs.
+  # org-user-notification-services exposes /org/v1/... and /user/v1/... — the
+  # smoke test hits {prefix}/v1/read/smoketest. Confirm /org/v1/read/smoketest
+  # exists against the live /v3/api-docs during onboarding; adjust if it differs.
   smoke_test_prefix: org
 
 # Application container resource envelope. Data-service (Postgres/Redis/
@@ -58,7 +58,7 @@ resources:
 # here — it is injected at runtime (Jenkins DB_CREDENTIALS -> Kubernetes Secret).
 # scripts/setup-cluster.sh reads name/username from here so the bootstrap and
 # the app agree on one value. SPRING_DATASOURCE_URL below must reference the
-# same database name. Distinct from agri's oas_db so the two services' data
+# same database name. Distinct from agri's acs_db so the two services' data
 # stays isolated.
 database:
   name: oas_db
@@ -88,19 +88,19 @@ env:
   SPRING_REDIS_PORT: "6379"
 
 secrets:
-  secret_name: organisation-catalogue-secrets
+  secret_name: org-user-notification-services-secrets
 
 helm:
-  release_name: organisation-catalogue
+  release_name: org-user-notification-services
   # Shared generic chart; per-service values file supplies env/secretName/fullnameOverride.
   chart_path: kubernetes/helm/oas-catalogue
-  values_file: values-organisation-catalogue.yaml
+  values_file: values-org-user-notification-services.yaml
 
 # Jenkins credential IDs the pipeline expects (the values live in Jenkins, not here):
 #   DB_CREDENTIALS  — Postgres username/password (username must equal database.username)
 #   ES_CREDENTIALS  — Elasticsearch username/password
-#   ec2-deploy-key  — SSH private key for the K8s node (organisation-catalogue node)
-# Scope these to the organisation-catalogue Jenkins job/folder so they carry
-# org's values, not agri's.
+#   ec2-deploy-key  — SSH private key for the K8s node
+# Scope these to the org-user-notification-services Jenkins job/folder so they
+# carry org's values, not agri's.
 # The UAT smoke test authenticates with auth.api_key above (static, non-secret).
 # Pre-prod should switch this to a real Jenkins secret-text credential.

@@ -20,21 +20,21 @@
 _format_version: "3.0"
 
 services:
-  - name: organisation-catalogue
-    url: http://organisation-catalogue.app.svc.cluster.local:8080
+  - name: org-user-notification-services
+    url: http://org-user-notification-services.app.svc.cluster.local:8080
     routes:
-      - name: organisation-catalogue-read
+      - name: org-user-notification-services-read
         strip_path: false
         paths:
-          - "~/org/v1/(read|search).*"
+          - "~/(org|user)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
               allow: ["readers", "editors"]
-      - name: organisation-catalogue-write
+      - name: org-user-notification-services-write
         strip_path: false
         paths:
-          - "~/org/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
+          - "~/(org|user)/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
         plugins:
           - name: acl
             config:

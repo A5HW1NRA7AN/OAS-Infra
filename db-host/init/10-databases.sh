@@ -4,7 +4,7 @@
 # (set from db-host/.env). Idempotent-safe via DO blocks.
 #
 #   acs_db  / acs_user   — agri-catalogue-service
-#   oas_db  / oas_user   — organisation-catalogue
+#   oas_db  / oas_user   — org-user-notification-services
 #   kong    / kong_user  — Kong gateway's own datastore (DB mode)
 set -euo pipefail
 
