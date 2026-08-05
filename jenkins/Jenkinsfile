@@ -6,9 +6,14 @@
 // own multi-stage Dockerfile, pushes to ECR, and deploys via the shared Helm
 // chart in this repo with the service's per-service values file.
 //
-// One pipeline, many services: the SERVICE build parameter selects which
-// services/<SERVICE>.config.yaml drives the build. Create one Jenkins job per
-// service (each with its own SERVICE + EC2_HOST and its own scoped credentials).
+// PRESS-BUTTON DEPLOY: this pipeline takes NO build parameters. Everything is
+// resolved automatically:
+//   * SERVICE      — from the job name via SERVICE_BY_JOB below.
+//   * BASTION_HOST / NODE_PRIVATE_IP / NGINX_HOST — discovered from the EC2
+//     Name tags (<NAME_PREFIX>-bastion / -K8s-Node / -nginx) using aws-credentials,
+//     so restarts that change public IPs (no EIP) need no re-typing.
+//   * SMOKE_API_KEY — read from the service config (auth.api_key, UAT non-secret).
+// To onboard a service: add one SERVICE_BY_JOB entry + a pipelineJob in casc.yaml.
 //
 // Design notes:
 //   * The image tag is the APPLICATION commit SHA (captured from ./app), NOT
@@ -23,55 +28,31 @@
 pipeline {
     agent any
 
-    // The k8s node now lives in a PRIVATE subnet — Jenkins reaches it via the
-    // bastion (SSH ProxyJump). All three host values come from the oas-uat
-    // terraform outputs (bastion_public_ip, node_private_ip, nginx_public_ip).
-    parameters {
-        string(
-            name: 'SERVICE',
-            defaultValue: 'agri-catalogue',
-            description: 'Service to build/deploy — selects services/<SERVICE>.config.yaml (e.g. agri-catalogue, org-user-notification-services).'
-        )
-        string(
-            name: 'BASTION_HOST',
-            defaultValue: '',
-            description: 'Bastion public IP (terraform output: bastion_public_ip) — the SSH ProxyJump host.'
-        )
-        string(
-            name: 'NODE_PRIVATE_IP',
-            defaultValue: '',
-            description: 'Private IP of the k8s node (terraform output: node_private_ip).'
-        )
-        string(
-            name: 'NGINX_HOST',
-            defaultValue: '',
-            description: 'nginx public IP (terraform output: nginx_public_ip) — used for the smoke test.'
-        )
-        string(
-            name: 'SMOKE_API_KEY',
-            defaultValue: '',
-            description: 'Optional: a Kong role API key to run the smoke test through nginx. Leave blank to skip. (UAT role key, not a secret.)'
-        )
-    }
-
     environment {
         EC2_USER = "ubuntu"
+        // The oas-uat environment's terraform name_prefix / cluster_name. The EC2
+        // instances are tagged <NAME_PREFIX>-bastion / -nginx / -K8s-Node.
+        NAME_PREFIX = "oas-uat"
     }
 
     stages {
         stage('Load Config') {
             steps {
                 script {
-                    if (!params.BASTION_HOST?.trim()) {
-                        error("BASTION_HOST parameter is required (terraform output bastion_public_ip).")
+                    // 1) Which service is this job? Derived from the job name (no build
+                    //    param). agri's job is 'agri-catalogue-service' but its SERVICE
+                    //    (config file) is 'agri-catalogue', so the mapping is explicit.
+                    def SERVICE_BY_JOB = [
+                        'agri-catalogue-service'         : 'agri-catalogue',
+                        'org-user-notification-services' : 'org-user-notification-services',
+                    ]
+                    def jobLeaf = env.JOB_NAME.tokenize('/').last()
+                    env.SERVICE = SERVICE_BY_JOB[jobLeaf]
+                    if (!env.SERVICE) {
+                        error("No SERVICE mapping for job '${jobLeaf}'. Add it to SERVICE_BY_JOB in jenkins/Jenkinsfile.")
                     }
-                    if (!params.NODE_PRIVATE_IP?.trim()) {
-                        error("NODE_PRIVATE_IP parameter is required (terraform output node_private_ip).")
-                    }
-                    if (!params.SERVICE?.trim()) {
-                        error("SERVICE parameter is required (selects services/<SERVICE>.config.yaml).")
-                    }
-                    def configFile = "services/${params.SERVICE}.config.yaml"
+
+                    def configFile = "services/${env.SERVICE}.config.yaml"
                     if (sh(script: "test -f ${configFile}", returnStatus: true) != 0) {
                         error("Service config not found: ${configFile}")
                     }
@@ -90,27 +71,49 @@ pipeline {
                     env.APP_NAMESPACE   = cfg('namespace')
                     env.SECRET_NAME     = cfg('secret_name')     // <service>-secrets
                     env.SMOKE_PREFIX    = cfg('smoke_test_prefix')
+                    env.SMOKE_API_KEY   = cfg('api_key')         // UAT role key (non-secret)
                     // DB username is non-secret (from config); the password comes from a
                     // per-service Jenkins secret 'db-password-<SERVICE>' (users differ:
                     // acs_user vs oas_user, so a single global credential can't serve both).
                     env.DB_USERNAME     = cfg('username')
-                    env.DB_CRED_ID      = "db-password-${params.SERVICE}"
+                    env.DB_CRED_ID      = "db-password-${env.SERVICE}"
                     env.APP_REPO_URL    = cfg('url')
                     env.APP_REPO_BRANCH = cfg('branch')
 
-                    // Derive the AWS account ID — never hardcode it. The agent has
-                    // no ambient AWS env, so the call is wrapped in the credential.
+                    // 2) Everything needing AWS: the account ID and the live host IPs,
+                    //    discovered from EC2 Name tags (running instances only). No EIPs,
+                    //    so this keeps working across instance restarts with new IPs.
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                         env.AWS_ACCOUNT_ID = sh(
                             script: "aws sts get-caller-identity --query Account --output text",
                             returnStdout: true
                         ).trim()
+                        def ec2ip = { nameTag, field ->
+                            sh(
+                                script: "aws ec2 describe-instances --region ${env.ECR_REGION} " +
+                                        "--filters 'Name=tag:Name,Values=${nameTag}' 'Name=instance-state-name,Values=running' " +
+                                        "--query 'Reservations[0].Instances[0].${field}' --output text",
+                                returnStdout: true
+                            ).trim()
+                        }
+                        env.BASTION_HOST    = ec2ip("${env.NAME_PREFIX}-bastion",  'PublicIpAddress')
+                        env.NODE_PRIVATE_IP = ec2ip("${env.NAME_PREFIX}-K8s-Node", 'PrivateIpAddress')
+                        env.NGINX_HOST      = ec2ip("${env.NAME_PREFIX}-nginx",    'PublicIpAddress')
+                    }
+                    def missing = { v -> v == null || v == '' || v == 'None' }
+                    if (missing(env.BASTION_HOST)) {
+                        error("Could not discover the bastion IP (tag ${env.NAME_PREFIX}-bastion, running). " +
+                              "Is the instance up, and does aws-credentials allow ec2:DescribeInstances?")
+                    }
+                    if (missing(env.NODE_PRIVATE_IP)) {
+                        error("Could not discover the k8s node private IP (tag ${env.NAME_PREFIX}-K8s-Node, running).")
                     }
                     env.ECR_REGISTRY = "${env.AWS_ACCOUNT_ID}.dkr.ecr.${env.ECR_REGION}.amazonaws.com"
                     env.ECR_REPO     = "${env.ECR_REGISTRY}/${env.ECR_REPO_NAME}"
 
-                    echo "Service       : ${params.SERVICE}"
-                    echo "Deploy target : ${params.NODE_PRIVATE_IP} via bastion ${params.BASTION_HOST}"
+                    echo "Service       : ${env.SERVICE}"
+                    echo "Deploy target : ${env.NODE_PRIVATE_IP} via bastion ${env.BASTION_HOST}"
+                    echo "nginx (smoke) : ${env.NGINX_HOST}"
                     echo "ECR repository: ${env.ECR_REPO}"
                     echo "Helm release  : ${env.HELM_RELEASE} (ns: ${env.APP_NAMESPACE})"
                     echo "Helm chart    : ${env.HELM_CHART} (-f ${env.HELM_VALUES})"
@@ -183,8 +186,8 @@ Host *
   UserKnownHostsFile /dev/null
   IdentityFile \${SSH_KEY}
 SSHEOF
-                        SSH_OPTS="-F \$SSHCFG -o ProxyJump=${EC2_USER}@${params.BASTION_HOST}"
-                        NODE="${EC2_USER}@${params.NODE_PRIVATE_IP}"
+                        SSH_OPTS="-F \$SSHCFG -o ProxyJump=${EC2_USER}@${env.BASTION_HOST}"
+                        NODE="${EC2_USER}@${env.NODE_PRIVATE_IP}"
 
                         # 1) Ensure the target namespace exists (idempotent).
                         ssh \$SSH_OPTS \$NODE \\
@@ -225,30 +228,26 @@ SSHEOF
         stage('Smoke Test') {
             steps {
                 script {
-                    if (!params.SMOKE_API_KEY?.trim()) {
-                        echo "SMOKE_API_KEY not provided — skipping the through-Kong smoke test. " +
+                    if (!env.SMOKE_API_KEY?.trim() || !env.NGINX_HOST?.trim() || env.NGINX_HOST == 'None') {
+                        echo "Smoke key or nginx host unavailable — skipping the through-Kong smoke test. " +
                              "(helm --wait already gated on pod readiness.)"
-                        return
-                    }
-                    if (!params.NGINX_HOST?.trim()) {
-                        error("NGINX_HOST is required when SMOKE_API_KEY is set.")
+                    } else {
+                        // Hit the app through the public nginx entrypoint + Kong (key-auth).
+                        sh """
+                            for i in \$(seq 1 10); do
+                                if curl -sf http://${env.NGINX_HOST}/${env.SMOKE_PREFIX}/v1/read/smoketest \\
+                                      -H "apikey: ${env.SMOKE_API_KEY}"; then
+                                    echo "Smoke test passed."
+                                    exit 0
+                                fi
+                                echo "Smoke test attempt \$i failed; retrying in 15s..."
+                                sleep 15
+                            done
+                            echo "Smoke test failed after retries."
+                            exit 1
+                        """
                     }
                 }
-                // Hit the app through the public nginx entrypoint + Kong (key-auth).
-                sh """
-                    if [ -z "${params.SMOKE_API_KEY}" ]; then echo "no smoke key; skipping"; exit 0; fi
-                    for i in \$(seq 1 10); do
-                        if curl -sf http://${params.NGINX_HOST}/${SMOKE_PREFIX}/v1/read/smoketest \\
-                              -H "apikey: ${params.SMOKE_API_KEY}"; then
-                            echo "Smoke test passed."
-                            exit 0
-                        fi
-                        echo "Smoke test attempt \$i failed; retrying in 15s..."
-                        sleep 15
-                    done
-                    echo "Smoke test failed after retries."
-                    exit 1
-                """
             }
         }
     }
@@ -265,7 +264,7 @@ SSHEOF
             echo "Pipeline failed — check stage logs above for details."
         }
         success {
-            echo "Deployed ${params.SERVICE} image tag ${IMAGE_TAG} to node ${params.NODE_PRIVATE_IP} (via bastion ${params.BASTION_HOST}) successfully."
+            echo "Deployed ${env.SERVICE} image tag ${IMAGE_TAG} to node ${env.NODE_PRIVATE_IP} (via bastion ${env.BASTION_HOST}) successfully."
         }
     }
 }
