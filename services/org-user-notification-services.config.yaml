@@ -47,6 +47,12 @@ routing:
   # exists against the live /v3/api-docs during onboarding; adjust if it differs.
   smoke_test_prefix: org
 
+# Every catalogue prefix this service serves — the single source of truth for
+# scripts/flush-databases.sh (Postgres table = <catalogue>, ES index =
+# <catalogue>_index, Redis keys = <catalogue>-*). Keep in sync with the Kong
+# route prefixes in kong/kong.decK.yaml. Add a new catalogue here when you add one.
+catalogues: [org, user]
+
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
 # budget block there.
