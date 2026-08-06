@@ -2,31 +2,35 @@
 # flush-databases.sh
 # ─────────────────────────────────────────────────────────────────────────────
 # DESTRUCTIVE. Flushes catalogue DATA on the DB host so it can be re-ingested via
-# bulk upload — SCOPED per service, so you flush only what you choose. Works for
-# every current and future service: it reads the `catalogues:` list from each
-# services/<svc>.config.yaml (the single source of truth), so a new service or
-# catalogue needs no change here — just its config entry.
+# bulk upload — at whatever granularity you choose: a single catalogue, a whole
+# service, or everything. Config-driven: it reads the `catalogues:` list from each
+# services/<svc>.config.yaml (the single source of truth), so new services /
+# catalogues need no change here — just their config entry.
 #
-# Per selected service, for each of its catalogues <c>:
-#   • PostgreSQL    : TRUNCATE table <c>       (in that service's database; schema KEPT)
+# For each catalogue <c> it flushes, in that catalogue's own database:
+#   • PostgreSQL    : TRUNCATE table <c>       (schema KEPT)
 #   • Elasticsearch : DELETE index <c>_index   (app recreates it on the next write)
-#   • Redis         : DEL keys <c>-*           (record cache; NO FLUSHALL — other
-#                                               services' cache is untouched)
-# App pods are NOT touched — they repopulate on your next bulk upload.
-#
-# Because the scope is the config's catalogue list (not "every table in the DB"),
-# stale/orphaned tables and other services sharing the same ES/Redis are safe.
+#   • Redis         : DEL keys <c>-*           (record cache; NO FLUSHALL)
+# App pods are NOT touched — they repopulate on your next bulk upload. Scope is
+# always the exact catalogue(s) named, so other catalogues / services (and the
+# shared ES/Redis) are never affected.
 #
 # Usage:
-#   scripts/flush-databases.sh --all              # flush every service
-#   scripts/flush-databases.sh --org              # flush one (prefix-matches the service name)
-#   scripts/flush-databases.sh --org --agri       # flush several
-#   scripts/flush-databases.sh --all --yes        # skip the typed confirmation
-#   scripts/flush-databases.sh --list             # show services / dbs / catalogues, then exit
+#   scripts/flush-databases.sh --list                 # show services / dbs / catalogues
+#   scripts/flush-databases.sh --all                  # every catalogue of every service
+#   scripts/flush-databases.sh --agri                 # a whole service (prefix-matches the name)
+#   scripts/flush-databases.sh --cropvariety          # ONE catalogue (by name)
+#   scripts/flush-databases.sh -c cropvariety -c seed # one or more catalogues (explicit flag)
+#   scripts/flush-databases.sh --org --cropvariety    # mix: whole org + agri's cropvariety
+#   scripts/flush-databases.sh --all --yes            # skip the typed FLUSH confirmation
 #
-# Selectors match by prefix on the service name, so --org == org-user-notification-services,
-# --agri == agri-catalogue. Reaches the private DB host through the bastion using
-# terraform's env.sh (BASTION_IP / DB_HOST_IP / KEY_PATH). Requires the oas-uat env.
+# Selector rules: `--<name>` first tries a SERVICE (prefix match, e.g. --agri, --org),
+# then falls back to an exact CATALOGUE name (e.g. --cropvariety). Use `-c <name>` /
+# `--catalogue <name>` to force catalogue-level (handy when a name is also a service
+# prefix, e.g. `-c org` flushes only the org catalogue, not org+user).
+#
+# Reaches the private DB host through the bastion using terraform's env.sh
+# (BASTION_IP / DB_HOST_IP / KEY_PATH). Requires the oas-uat env provisioned.
 # ─────────────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -45,48 +49,68 @@ shopt -s nullglob
 CFGS=( "$REPO_ROOT"/services/*.config.yaml )
 [ ${#CFGS[@]} -gt 0 ] || { echo "ERROR: no services/*.config.yaml found." >&2; exit 1; }
 
-usage() {
-  sed -n '2,33p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
-}
+usage() { sed -n '/^# Usage:/,/oas-uat env provisioned/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; }
 
 list_services() {
-  echo "Discovered services (selector = any prefix of the name):"
+  echo "Discovered services (selector = any prefix of the name; catalogues are flushable by name):"
   for c in "${CFGS[@]}"; do
     printf "  %-32s db=%-8s catalogues: %s\n" "$(stem_of "$c")" "$(db_of "$c")" "$(cats_of "$c" | xargs echo)"
   done
 }
 
+# Find the config that owns an exact catalogue name.
+cfg_for_catalogue() {
+  local want="$1" c cat
+  for c in "${CFGS[@]}"; do
+    for cat in $(cats_of "$c"); do [ "$cat" = "$want" ] && { echo "$c"; return 0; }; done
+  done
+  return 1
+}
+
+# ── selection state: WANT[cfg] = "*" (all catalogues) or " c1 c2 " (subset) ──
+declare -A WANT=(); ORDER=(); ASSUME_YES=0; DO_LIST=0
+want_full() { local c="$1"; [ -n "${WANT[$c]:-}" ] || ORDER+=("$c"); WANT[$c]="*"; }
+want_cat()  { local c="$1" cat="$2"
+  if [ -z "${WANT[$c]:-}" ]; then ORDER+=("$c"); WANT[$c]=" $cat "
+  elif [ "${WANT[$c]}" != "*" ] && [[ "${WANT[$c]}" != *" $cat "* ]]; then WANT[$c]="${WANT[$c]}$cat "; fi
+}
+select_token() {   # a bare --<name>: service prefix first, else exact catalogue
+  local tl; tl="$(printf '%s' "$1" | lc)"; local c hit=0
+  for c in "${CFGS[@]}"; do
+    if [[ "$(stem_of "$c" | lc)" == "$tl"* || "$(svc_of "$c" | lc)" == "$tl"* ]]; then want_full "$c"; hit=1; fi
+  done
+  [ $hit -eq 1 ] && return 0
+  local cfg; cfg="$(cfg_for_catalogue "$tl")" && { want_cat "$cfg" "$tl"; return 0; }
+  return 1
+}
+
 # ── parse args ───────────────────────────────────────────────────────────────
-ASSUME_YES=0; ALL=0; DO_LIST=0
-declare -a SELECTED=()
 [ $# -gt 0 ] || { usage; exit 1; }
-for arg in "$@"; do
-  t="${arg#-}"; t="${t#-}"                       # strip one or two leading dashes
-  case "$(echo "$t" | lc)" in
-    yes|y)  ASSUME_YES=1 ;;
-    all)    ALL=1 ;;
-    list)   DO_LIST=1 ;;
-    "")     ;;
-    *)      matched=0
-            tl="$(echo "$t" | lc)"
-            for c in "${CFGS[@]}"; do
-              s="$(stem_of "$c" | lc)"; v="$(svc_of "$c" | lc)"
-              if [[ "$s" == "$tl"* || "$v" == "$tl"* ]]; then SELECTED+=("$c"); matched=1; fi
-            done
-            [ "$matched" -eq 1 ] || { echo "ERROR: no service matches '$arg'." >&2; list_services >&2; exit 1; } ;;
+args=( "$@" ); i=0
+while [ $i -lt ${#args[@]} ]; do
+  arg="${args[$i]}"; i=$((i+1))
+  case "$arg" in
+    -y|--yes)          ASSUME_YES=1 ;;
+    --list)            DO_LIST=1 ;;
+    --all)             for c in "${CFGS[@]}"; do want_full "$c"; done ;;
+    -c|--catalogue)    cat="${args[$i]:-}"; i=$((i+1))
+                       [ -n "$cat" ] || { echo "ERROR: $arg needs a catalogue name." >&2; exit 1; }
+                       cfg="$(cfg_for_catalogue "$cat")" || { echo "ERROR: no service lists catalogue '$cat'." >&2; list_services >&2; exit 1; }
+                       want_cat "$cfg" "$cat" ;;
+    -c=*|--catalogue=*) cat="${arg#*=}"
+                       cfg="$(cfg_for_catalogue "$cat")" || { echo "ERROR: no service lists catalogue '$cat'." >&2; list_services >&2; exit 1; }
+                       want_cat "$cfg" "$cat" ;;
+    -*)                t="${arg#-}"; t="${t#-}"
+                       select_token "$t" || { echo "ERROR: '$arg' matches no service or catalogue." >&2; list_services >&2; exit 1; } ;;
+    *)                 echo "ERROR: unexpected argument '$arg' (did you mean -c $arg ?)." >&2; usage >&2; exit 1 ;;
   esac
 done
 
 if [ "$DO_LIST" -eq 1 ]; then list_services; exit 0; fi
-[ "$ALL" -eq 1 ] && SELECTED=( "${CFGS[@]}" )
-[ ${#SELECTED[@]} -gt 0 ] || { echo "ERROR: nothing selected — pass --all or a service selector." >&2; list_services >&2; exit 1; }
+[ ${#ORDER[@]} -gt 0 ] || { echo "ERROR: nothing selected — pass --all, a --service, or -c <catalogue>." >&2; list_services >&2; exit 1; }
 
-# de-duplicate SELECTED (a token may match several / overlap)
-declare -a SVC=()
-for c in "${SELECTED[@]}"; do
-  seen=0; for e in "${SVC[@]:-}"; do [ "$e" = "$c" ] && seen=1; done
-  [ "$seen" -eq 0 ] && SVC+=("$c")
-done
+# effective catalogue list for a config (all, or the chosen subset)
+eff_cats() { local c="$1"; if [ "${WANT[$c]}" = "*" ]; then cats_of "$c"; else echo ${WANT[$c]}; fi; }
 
 # ── env (bastion / db host / key) ────────────────────────────────────────────
 # shellcheck disable=SC1091
@@ -95,23 +119,23 @@ done
 : "${BASTION_IP:?not set in env.sh}"; : "${DB_HOST_IP:?not set in env.sh}"; : "${KEY_PATH:?not set in env.sh}"
 
 # ── confirm ──────────────────────────────────────────────────────────────────
-echo "About to PERMANENTLY FLUSH catalogue data on the DB host (${DB_HOST_IP}):"
-for c in "${SVC[@]}"; do
-  cats="$(cats_of "$c" | xargs echo)"
+echo "About to PERMANENTLY FLUSH these catalogues on the DB host (${DB_HOST_IP}):"
+for c in "${ORDER[@]}"; do
+  cats="$(eff_cats "$c" | xargs echo)"
   [ -n "$cats" ] || { echo "ERROR: $(basename "$c") has no 'catalogues:' list — add one." >&2; exit 1; }
-  printf "  • %-32s db=%-8s catalogues: %s\n" "$(stem_of "$c")" "$(db_of "$c")" "$cats"
+  printf "  • %-32s db=%-8s -> %s\n" "$(stem_of "$c")" "$(db_of "$c")" "$cats"
 done
-echo "  (Postgres tables TRUNCATEd, ES <c>_index deleted, Redis <c>-* deleted; schema kept.)"
+echo "  (Postgres TRUNCATE <c>, ES delete <c>_index, Redis delete <c>-*; schema kept.)"
 
 if [ "$ASSUME_YES" -ne 1 ]; then
   read -r -p "Type FLUSH to proceed (anything else aborts): " ans
   [ "$ans" = "FLUSH" ] || { echo "Aborted — nothing was changed."; exit 1; }
 fi
 
-# ── flush each selected service on the DB host (via bastion) ──────────────────
-for c in "${SVC[@]}"; do
-  db="$(db_of "$c")"; cats="$(cats_of "$c")"
-  echo "==> Flushing $(stem_of "$c") (db=$db) via bastion -> ${DB_HOST_IP} ..."
+# ── flush each selected (db, catalogues) group on the DB host (via bastion) ───
+for c in "${ORDER[@]}"; do
+  db="$(db_of "$c")"; cats="$(eff_cats "$c")"
+  echo "==> Flushing [$(echo $cats)] in $db (service $(stem_of "$c")) via bastion -> ${DB_HOST_IP} ..."
   # Runs ON the DB host. Positional args: $1=db, $2..=catalogue names.
   ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
       -o ProxyCommand="ssh -W %h:%p -i $KEY_PATH -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null ubuntu@$BASTION_IP" \
@@ -120,7 +144,7 @@ set -e
 db="$1"; shift
 [ "$#" -gt 0 ] || { echo "  (no catalogues to flush)"; exit 0; }
 
-# Postgres: TRUNCATE only the listed catalogue tables that actually exist.
+# Postgres: TRUNCATE only the named catalogue tables that actually exist.
 # quote_ident() safely quotes reserved words (e.g. "user").
 inlist=""; for cse in "$@"; do inlist="${inlist:+$inlist,}'$cse'"; done
 echo "  PostgreSQL[$db]: truncating [$*] (schema kept)"
