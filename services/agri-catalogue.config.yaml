@@ -36,6 +36,12 @@ openapi:
 routing:
   smoke_test_prefix: cropcategory   # Jenkins smoke test hits /<prefix>/v1/read/smoketest; update if this domain is ever removed
 
+# Every catalogue prefix this service serves — the single source of truth for
+# scripts/flush-databases.sh (Postgres table = <catalogue>, ES index =
+# <catalogue>_index, Redis keys = <catalogue>-*). Keep in sync with the Kong
+# route prefixes in kong/kong.decK.yaml. Add a new catalogue here when you add one.
+catalogues: [audit, seed, croptype, cropcategory, cropvariety, livestock, season, soil, extensionequipment, pesticide, insecticide, fertilizer, marketplace, locationmapper, locationobject]
+
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
 # budget block there.
