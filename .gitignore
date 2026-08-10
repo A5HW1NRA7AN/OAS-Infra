@@ -24,6 +24,7 @@ terraform.rc
 *.key
 *.kubeconfig
 kubeconfig
+*.local.md          # local-only notes that may contain secrets (e.g. docs/pgadmin-access.local.md)
 
 # --- Terraform generated outputs ---
 env.sh
