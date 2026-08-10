@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# Manually rotate a consumer's API key (the "SuperAdmin" operational capability).
-# Generates a fresh key, replaces the consumer's key-auth credential via the
-# PRIVATE Kong Admin API (reached over the bastion), updates kong/.env so the
-# next `deck-sync.sh` stays consistent, and prints the new key to hand to the
-# developer.
-#
+# Rotate a consumer's API key: generate a fresh key, replace it via the private
+# Kong Admin API (over the bastion), update kong/.env so deck-sync stays
+# consistent, and print the new key.
 #   Usage: kong/scripts/rotate-key.sh <user|admin|superadmin>
-#
-# The Kong Admin API is never exposed publicly — this runs through the bastion.
 set -euo pipefail
 
 CONSUMER="${1:-}"

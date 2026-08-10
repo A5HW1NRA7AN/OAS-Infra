@@ -1,49 +1,24 @@
-// CI/CD for OAS catalogue services (agri-catalogue, org-user-notification-services, …).
+// CI/CD for OAS catalogue services. This repo owns the pipeline: it checks out the
+// app repo (app_repo.url in services/<SERVICE>.config.yaml), builds its Dockerfile,
+// pushes to ECR, and deploys via the shared Helm chart.
 //
-// OAS-Infra is the pipeline owner: the Jenkins job checks out THIS repo, then
-// this pipeline checks out the application repo (app_repo.url in
-// services/<SERVICE>.config.yaml) into ./app, builds the image from the app's
-// own multi-stage Dockerfile, pushes to ECR, and deploys via the shared Helm
-// chart in this repo with the service's per-service values file.
-//
-// PRESS-BUTTON DEPLOY: this pipeline takes NO build parameters. Everything is
-// resolved automatically:
-//   * SERVICE      — from the job name via SERVICE_BY_JOB below.
-//   * BASTION_HOST / NODE_PRIVATE_IP / NGINX_HOST — discovered from the EC2
-//     Name tags (<NAME_PREFIX>-bastion / -K8s-Node / -nginx) using aws-credentials,
-//     so restarts that change public IPs (no EIP) need no re-typing.
-// The deploy is gated by `helm --wait` (pod readiness). End-to-end verification
-// through nginx+Kong is a manual step after deck-sync (real Kong keys live in
-// kong/.env, not in this repo). To onboard a service: add one SERVICE_BY_JOB
-// entry + a pipelineJob in casc.yaml.
-//
-// Design notes:
-//   * The image tag is the APPLICATION commit SHA (captured from ./app), NOT
-//     env.GIT_COMMIT (which is OAS-Infra's SHA, since that is the job's SCM).
-//   * Every build publishes two tags: the immutable <app-sha> and a moving
-//     `latest`. Deploys always reference the immutable SHA so a running pod
-//     traces back to an exact commit.
-//   * AWS credentials are NOT ambient on the agent — every `aws` call is
-//     wrapped in the `aws-credentials` binding.
-//   * Helm is not installed on the Jenkins agent, so deploy runs the node's
-//     own /usr/local/bin/helm over SSH.
+// Press-button: no build parameters. SERVICE comes from the job name (SERVICE_BY_JOB
+// below); bastion/node/nginx IPs are discovered from EC2 Name tags via aws-credentials.
+// Image tag = the app commit SHA (immutable); deploy is gated by `helm --wait`.
+// Onboard a service: add a SERVICE_BY_JOB entry + a pipelineJob in casc.yaml.
 pipeline {
     agent any
 
     environment {
         EC2_USER = "ubuntu"
-        // The oas-uat environment's terraform name_prefix / cluster_name. The EC2
-        // instances are tagged <NAME_PREFIX>-bastion / -nginx / -K8s-Node.
-        NAME_PREFIX = "oas-uat"
+        NAME_PREFIX = "oas-uat"   // EC2 tags: <NAME_PREFIX>-bastion / -nginx / -K8s-Node
     }
 
     stages {
         stage('Load Config') {
             steps {
                 script {
-                    // 1) Which service is this job? Derived from the job name (no build
-                    //    param). agri's job is 'agri-catalogue-service' but its SERVICE
-                    //    (config file) is 'agri-catalogue', so the mapping is explicit.
+                    // SERVICE from the job name (agri's job name != its SERVICE, so map explicitly).
                     def SERVICE_BY_JOB = [
                         'agri-catalogue-service'         : 'agri-catalogue',
                         'org-user-notification-services' : 'org-user-notification-services',
@@ -58,7 +33,7 @@ pipeline {
                     if (sh(script: "test -f ${configFile}", returnStatus: true) != 0) {
                         error("Service config not found: ${configFile}")
                     }
-                    // Dependency-free reads from the single source of truth.
+                    // read fields from the service config
                     def cfg = { key ->
                         sh(
                             script: "grep -E '^[[:space:]]*${key}:' ${configFile} | head -1 | awk '{print \$2}'",
@@ -72,17 +47,13 @@ pipeline {
                     env.HELM_VALUES     = cfg('values_file')     // e.g. values-agri-catalogue.yaml
                     env.APP_NAMESPACE   = cfg('namespace')
                     env.SECRET_NAME     = cfg('secret_name')     // <service>-secrets
-                    // DB username is non-secret (from config); the password comes from a
-                    // per-service Jenkins secret 'db-password-<SERVICE>' (users differ:
-                    // acs_user vs oas_user, so a single global credential can't serve both).
+                    // DB user from config; password from per-service Jenkins secret db-password-<SERVICE>.
                     env.DB_USERNAME     = cfg('username')
                     env.DB_CRED_ID      = "db-password-${env.SERVICE}"
                     env.APP_REPO_URL    = cfg('url')
                     env.APP_REPO_BRANCH = cfg('branch')
 
-                    // 2) Everything needing AWS: the account ID and the live host IPs,
-                    //    discovered from EC2 Name tags (running instances only). No EIPs,
-                    //    so this keeps working across instance restarts with new IPs.
+                    // Account ID + live host IPs from AWS (EC2 Name tags) — survives IP changes (no EIP).
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                         env.AWS_ACCOUNT_ID = sh(
                             script: "aws sts get-caller-identity --query Account --output text",
@@ -134,10 +105,7 @@ pipeline {
             }
         }
 
-        // NOTE: there is intentionally no separate Maven "Build & Test" stage.
-        // The application's multi-stage Dockerfile runs `mvn clean package`
-        // inside its build stage, so building the JAR on the agent first would
-        // just be thrown away by `docker build`.
+        // No separate Maven stage: the app's multi-stage Dockerfile runs `mvn package`.
 
         stage('Docker Build') {
             steps {
@@ -175,10 +143,8 @@ pipeline {
                 ]) {
                     sh """
                         set -e
-                        # The node is private: reach it via the bastion (ProxyJump). Use a temp
-                        # ssh config with "Host *" so host-key checking is disabled and the shared
-                        # key is applied to BOTH hops — command-line -o options do NOT propagate to
-                        # the ProxyJump/jump host, which caused "Host key verification failed".
+                        # Private node via bastion ProxyJump. A temp ssh config applies the key +
+                        # no-host-key-check to BOTH hops (-o flags don't propagate to the jump host).
                         SSHCFG=\$(mktemp)
                         cat > \$SSHCFG <<SSHEOF
 Host *
@@ -193,10 +159,8 @@ SSHEOF
                         ssh \$SSH_OPTS \$NODE \\
                             "kubectl create namespace ${APP_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
 
-                        # 2) Build the Secret manifest LOCALLY (values come from the
-                        #    masked withCredentials env vars) and pipe only the YAML
-                        #    over SSH. Secret values never appear in remote argv or the
-                        #    node's shell history, and are masked in the Jenkins console.
+                        # 2) Build the Secret manifest locally and pipe only the YAML over SSH
+                        #    (secret values never hit remote argv / shell history).
                         kubectl create secret generic ${SECRET_NAME} -n ${APP_NAMESPACE} \\
                             --from-literal=SPRING_DATASOURCE_USERNAME="${DB_USERNAME}" \\
                             --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
@@ -205,14 +169,11 @@ SSHEOF
                             --dry-run=client -o yaml \\
                           | ssh \$SSH_OPTS \$NODE "kubectl apply -n ${APP_NAMESPACE} -f -"
 
-                        # 3) Ship the Helm chart to the node. Remove any previous copy first
-                        #    (scp -r nests into ~/helm/helm if it already exists).
+                        # 3) Ship the Helm chart (rm old copy first; scp -r would nest into ~/helm/helm).
                         ssh \$SSH_OPTS \$NODE "rm -rf ~/helm"
                         scp \$SSH_OPTS -r ./${HELM_CHART} \$NODE:~/helm
 
-                        # 4) Deploy with the node's own Helm. Shared chart parameterized by
-                        #    the per-service values file (-f). image.repository always set;
-                        #    immutable SHA tag; --wait blocks on rollout readiness.
+                        # 4) Deploy with the node's Helm; --wait blocks on rollout readiness.
                         ssh \$SSH_OPTS \$NODE \\
                             "helm upgrade --install ${HELM_RELEASE} ~/helm \\
                                 -f ~/helm/${HELM_VALUES} \\
@@ -225,10 +186,8 @@ SSHEOF
             }
         }
 
-        // No in-pipeline smoke test: `helm --wait` already gates on pod readiness
-        // (liveness/readiness probes = app up + DB/ES/Redis reachable). End-to-end
-        // verification through nginx+Kong is a manual post-deck-sync step (needs a
-        // real Kong role key from kong/.env) — see the README deploy section.
+        // No in-pipeline smoke test: `helm --wait` gates pod readiness; verify through
+        // nginx+Kong manually after deck-sync (real Kong keys live in kong/.env).
     }
 
     post {

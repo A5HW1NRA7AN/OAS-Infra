@@ -1,14 +1,12 @@
 #!/usr/bin/env bash
-# Post-install config on the PRIVATE k8s node, reached through the bastion:
-# namespaces, local-path storage, ECR pull secret, and a local kubeconfig that
-# works over the bastion tunnel (server stays 127.0.0.1:6443 with the REAL CA —
-# no insecure-skip-tls-verify; the node's private IP + 127.0.0.1 are in the API
-# cert SANs via supplementary_addresses_in_ssl_keys).
+# Post-install on the private k8s node (via bastion): namespaces, local-path
+# storage, ECR pull secret + refresh cron, and fetch a kubeconfig that works over
+# the tunnel (server 127.0.0.1:6443 with the real CA; SANs set in kubespray vars).
 set -euo pipefail
 
 ENV_NAME="${1:-oas-uat}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"   # kubernetes/kubespray -> repo root
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 ENV_DIR="$REPO_ROOT/terraform/environments/$ENV_NAME"
 
 # shellcheck disable=SC1091

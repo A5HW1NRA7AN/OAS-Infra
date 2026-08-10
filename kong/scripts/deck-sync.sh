@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
 # Sync kong/kong.decK.yaml into the DB-backed Kong via decK, over the bastion.
-#
-# API keys for the 3 consumers are NOT in the repo — they come from kong/.env
-# (gitignored) or the environment (Jenkins), and decK resolves the
-# ${{ env "OAS_*_API_KEY" }} placeholders at sync time.
-#
-# Prereqs: ssh, kubectl, deck (https://github.com/Kong/deck). Run after the
-# cluster + Kong (DB mode) are up.
+# Consumer API keys come from kong/.env (gitignored); decK resolves the
+# ${{ env "OAS_*_API_KEY" }} placeholders at sync time. Needs: ssh, kubectl, deck.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

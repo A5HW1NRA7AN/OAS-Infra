@@ -1,11 +1,9 @@
 #!/bin/bash
-# Runs once on first Postgres init (docker-entrypoint-initdb.d). Creates one
-# role + database per tenant, with passwords injected from the container env
-# (set from db-host/.env). Idempotent-safe via DO blocks.
-#
+# First-run Postgres init (docker-entrypoint-initdb.d): a role + database per
+# tenant, passwords from the container env (db-host/.env). Idempotent.
 #   acs_db  / acs_user   — agri-catalogue-service
 #   oas_db  / oas_user   — org-user-notification-services
-#   kong    / kong_user  — Kong gateway's own datastore (DB mode)
+#   kong    / kong_user  — Kong gateway (DB mode)
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
