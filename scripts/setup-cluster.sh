@@ -1,21 +1,9 @@
 #!/usr/bin/env bash
-# setup-cluster.sh — orchestrates the OAS platform bootstrap for the new
-# VPC-based architecture (see docs/deployment-plan.md).
-#
-# Stages (run all, or a single one):
-#   terraform   Provision VPC + bastion/NAT + nginx + db-host + k8s-node.
-#   dbhost      Deliver db-host/ compose stack over the bastion and start it
-#               (Postgres[acs_db,oas_db,kong] + Elasticsearch + Redis + GUIs).
-#   kubespray   Install Kubernetes on the PRIVATE k8s node via the bastion.
-#   postinstall Namespaces, local-path, ECR pull secret; fetch kubeconfig.
-#   kong        Deploy Kong (DB mode, Postgres on the db-host) via Helm.
-#   deck        Sync kong/kong.decK.yaml (routes + RBAC consumers) via decK.
-#
-#   Usage:  scripts/setup-cluster.sh [stage]     (no stage = all, in order)
-#
-# Prereqs: terraform, helm, kubectl, ssh, scp, deck. db-host/.env and kong/.env
-# must exist (copy from the .example files). Application services (agri, org)
-# are deployed by Jenkins AFTER this, not here.
+# Orchestrate the OAS platform bootstrap (see docs/deployment-plan.md).
+# Stages: terraform | dbhost | kubespray | postinstall | kong | deck
+# Usage: scripts/setup-cluster.sh [stage]   (no stage = all, in order)
+# Prereqs: terraform, helm, kubectl, ssh, scp, deck; db-host/.env + kong/.env must exist.
+# App services (agri, org) are deployed by Jenkins after this, not here.
 set -euo pipefail
 
 STAGE="${1:-all}"
