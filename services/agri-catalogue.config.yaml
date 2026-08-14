@@ -12,8 +12,10 @@ service:
 
 # Application source repo. The pipeline checks this out to build the image.
 # Edit here when the app repo moves — never hardcode it in the Jenkinsfile.
+
+
 app_repo:
-  url: https://github.com/Open-Agri-Stack/agri-catalogue-service.git
+  url: https://github.com/Yeswanth07/agri-catalogue-service.git
   branch: main
 
 image:
