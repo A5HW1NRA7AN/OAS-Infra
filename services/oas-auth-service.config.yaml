@@ -7,7 +7,7 @@ service:
   container_port: 8080
 
 app_repo:
-  url: https://github.com/A5HW1NRA7AN/OAS-Auth-Service.git
+  url: https://github.com/Open-Agri-Stack/OAS-Auth-Service.git
   branch: main
 
 image:
