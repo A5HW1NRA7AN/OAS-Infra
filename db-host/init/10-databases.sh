@@ -3,7 +3,8 @@
 # tenant, passwords from the container env (db-host/.env). Idempotent.
 #   acs_db  / acs_user   — agri-catalogue-service
 #   oas_db  / oas_user   — org-user-notification-services
-#   kong    / kong_user  — Kong gateway (DB mode)
+#   kong     / kong_user  — Kong gateway (DB mode)
+#   keycloak / keycloak   — Keycloak identity provider (for oas-auth-service)
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname postgres <<SQL
@@ -16,6 +17,9 @@ DO \$\$ BEGIN
   END IF;
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'kong_user') THEN
     CREATE ROLE kong_user LOGIN PASSWORD '${KONG_DB_PASSWORD}';
+  END IF;
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'keycloak') THEN
+    CREATE ROLE keycloak LOGIN PASSWORD '${KEYCLOAK_DB_PASSWORD}';
   END IF;
 END \$\$;
 SQL
@@ -31,8 +35,9 @@ create_db() {
   fi
 }
 
-create_db acs_db  acs_user
-create_db oas_db  oas_user
-create_db kong    kong_user
+create_db acs_db   acs_user
+create_db oas_db   oas_user
+create_db kong     kong_user
+create_db keycloak keycloak
 
 echo "OAS databases initialised."
