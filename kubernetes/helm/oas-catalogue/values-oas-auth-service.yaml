@@ -1,0 +1,13 @@
+# Per-service overlay for oas-auth-service (passed with -f over the shared values.yaml).
+# Sets the deployed resource name (= in-cluster DNS host) + the k8s Secret name + env.
+fullnameOverride: oas-auth-service
+secretName: oas-auth-service-secrets
+
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_REDIS_HOST: "10.0.10.10"
+  SPRING_REDIS_PORT: "6379"
+  KEYCLOAK_BASE_URL: "http://10.0.10.10:8081"
+  KEYCLOAK_ISSUER: "http://10.0.10.10:8081/realms/OAS"
+  KEYCLOAK_REALM: "OAS"
+  KEYCLOAK_CLIENT_ID: "oas-auth-service"
