@@ -25,6 +25,7 @@ services:
       ACS_DB_PASSWORD: ${ACS_DB_PASSWORD:?set in .env}
       OAS_DB_PASSWORD: ${OAS_DB_PASSWORD:?set in .env}
       KONG_DB_PASSWORD: ${KONG_DB_PASSWORD:?set in .env}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set in .env}
     ports:
       - "5432:5432"
     volumes:
@@ -75,6 +76,39 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  # Keycloak identity provider (internal-only) for oas-auth-service. Uses the
+  # co-located Postgres (`keycloak` DB); KC_HOSTNAME pins the token issuer so
+  # tokens validate no matter how it's reached. Reached in-cluster + admin via
+  # the bastion tunnel; never public. Realm state lives in Postgres (not kcdata).
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7
+    container_name: oas-keycloak
+    restart: unless-stopped
+    command: start                                # stock image: plain `start` (not start-dev/--optimized)
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?set in .env}
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set in .env}
+      KC_HOSTNAME: http://10.0.10.10:8081         # must equal KEYCLOAK_ISSUER host (the "issuer trap")
+      KC_HOSTNAME_STRICT: "false"                 # allow admin/setup via the bastion tunnel (localhost)
+      KC_HTTP_ENABLED: "true"                     # private SG-gated net, no TLS (UAT); `start` needs this
+      KC_HEALTH_ENABLED: "true"                   # /health/* on mgmt port 9000
+    ports:
+      - "8081:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - kcdata:/opt/keycloak/data
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.1\\r\\nHost: x\\r\\nConnection: close\\r\\n\\r\\n' >&3 && cat <&3 | grep -q '200 OK'"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
 
   # ── Admin GUIs (bastion-tunnel only; SG blocks the internet) ───────────────
   pgadmin:
@@ -131,3 +165,4 @@ volumes:
   pgdata:
   esdata:
   redisdata:
+  kcdata:

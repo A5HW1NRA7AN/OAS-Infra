@@ -22,6 +22,7 @@ pipeline {
                     def SERVICE_BY_JOB = [
                         'agri-catalogue-service'         : 'agri-catalogue',
                         'org-user-notification-services' : 'org-user-notification-services',
+                        'oas-auth-service'               : 'oas-auth-service',
                     ]
                     def jobLeaf = env.JOB_NAME.tokenize('/').last()
                     env.SERVICE = SERVICE_BY_JOB[jobLeaf]
@@ -52,6 +53,9 @@ pipeline {
                     env.DB_CRED_ID      = "db-password-${env.SERVICE}"
                     env.APP_REPO_URL    = cfg('url')
                     env.APP_REPO_BRANCH = cfg('branch')
+                    // Secret strategy: 'db-es' (default, catalogue) or 'keycloak' (auth).
+                    env.SECRET_PROVIDER   = cfg('provider') ?: 'db-es'
+                    env.KC_SECRET_CRED_ID = cfg('client_secret_cred_id')
 
                     // Account ID + live host IPs from AWS (EC2 Name tags) — survives IP changes (no EIP).
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
@@ -136,52 +140,66 @@ pipeline {
 
         stage('Inject Secrets & Deploy') {
             steps {
-                withCredentials([
-                    string(credentialsId: env.DB_CRED_ID, variable: 'DB_PASS'),
-                    usernamePassword(credentialsId: 'ES_CREDENTIALS', usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS'),
-                    sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY')
-                ]) {
-                    sh """
-                        set -e
-                        # Private node via bastion ProxyJump. A temp ssh config applies the key +
-                        # no-host-key-check to BOTH hops (-o flags don't propagate to the jump host).
-                        SSHCFG=\$(mktemp)
-                        cat > \$SSHCFG <<SSHEOF
+                script {
+                    // Secret strategy differs per service; the SSH deploy below is shared.
+                    //   db-es    (catalogue): DB password + ES creds.
+                    //   keycloak (auth)     : one client secret, no DB.
+                    def creds = [ sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY') ]
+                    def secretCmd
+                    if (env.SECRET_PROVIDER == 'db-es') {
+                        creds << string(credentialsId: env.DB_CRED_ID, variable: 'DB_PASS')
+                        creds << usernamePassword(credentialsId: 'ES_CREDENTIALS',
+                                    usernameVariable: 'ES_USER', passwordVariable: 'ES_PASS')
+                        secretCmd = """kubectl create secret generic ${env.SECRET_NAME} -n ${env.APP_NAMESPACE} \\
+                            --from-literal=SPRING_DATASOURCE_USERNAME="${env.DB_USERNAME}" \\
+                            --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
+                            --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
+                            --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
+                            --dry-run=client -o yaml"""
+                    } else if (env.SECRET_PROVIDER == 'keycloak') {
+                        creds << string(credentialsId: env.KC_SECRET_CRED_ID, variable: 'KC_CLIENT_SECRET')
+                        secretCmd = """kubectl create secret generic ${env.SECRET_NAME} -n ${env.APP_NAMESPACE} \\
+                            --from-literal=KEYCLOAK_CLIENT_SECRET="\${KC_CLIENT_SECRET}" \\
+                            --dry-run=client -o yaml"""
+                    } else {
+                        error("Unknown secrets.provider '${env.SECRET_PROVIDER}' for ${env.SERVICE}")
+                    }
+
+                    withCredentials(creds) {
+                        sh """
+                            set -e
+                            # Private node via bastion ProxyJump. A temp ssh config applies the key +
+                            # no-host-key-check to BOTH hops (-o flags don't propagate to the jump host).
+                            SSHCFG=\$(mktemp)
+                            cat > \$SSHCFG <<SSHEOF
 Host *
   StrictHostKeyChecking no
   UserKnownHostsFile /dev/null
   IdentityFile \${SSH_KEY}
 SSHEOF
-                        SSH_OPTS="-F \$SSHCFG -o ProxyJump=${EC2_USER}@${env.BASTION_HOST}"
-                        NODE="${EC2_USER}@${env.NODE_PRIVATE_IP}"
+                            SSH_OPTS="-F \$SSHCFG -o ProxyJump=${env.EC2_USER}@${env.BASTION_HOST}"
+                            NODE="${env.EC2_USER}@${env.NODE_PRIVATE_IP}"
 
-                        # 1) Ensure the target namespace exists (idempotent).
-                        ssh \$SSH_OPTS \$NODE \\
-                            "kubectl create namespace ${APP_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+                            # Namespace + Secret (piped YAML — values never on remote argv / history).
+                            ssh \$SSH_OPTS \$NODE \\
+                                "kubectl create namespace ${env.APP_NAMESPACE} --dry-run=client -o yaml | kubectl apply -f -"
+                            ${secretCmd} \\
+                              | ssh \$SSH_OPTS \$NODE "kubectl apply -n ${env.APP_NAMESPACE} -f -"
 
-                        # 2) Build the Secret manifest locally and pipe only the YAML over SSH
-                        #    (secret values never hit remote argv / shell history).
-                        kubectl create secret generic ${SECRET_NAME} -n ${APP_NAMESPACE} \\
-                            --from-literal=SPRING_DATASOURCE_USERNAME="${DB_USERNAME}" \\
-                            --from-literal=SPRING_DATASOURCE_PASSWORD="\${DB_PASS}" \\
-                            --from-literal=ELASTICSEARCH_USERNAME="\${ES_USER}" \\
-                            --from-literal=ELASTICSEARCH_PASSWORD="\${ES_PASS}" \\
-                            --dry-run=client -o yaml \\
-                          | ssh \$SSH_OPTS \$NODE "kubectl apply -n ${APP_NAMESPACE} -f -"
+                            # Ship the Helm chart (rm old copy first; scp -r would nest into ~/helm/helm).
+                            ssh \$SSH_OPTS \$NODE "rm -rf ~/helm"
+                            scp \$SSH_OPTS -r ./${env.HELM_CHART} \$NODE:~/helm
 
-                        # 3) Ship the Helm chart (rm old copy first; scp -r would nest into ~/helm/helm).
-                        ssh \$SSH_OPTS \$NODE "rm -rf ~/helm"
-                        scp \$SSH_OPTS -r ./${HELM_CHART} \$NODE:~/helm
-
-                        # 4) Deploy with the node's Helm; --wait blocks on rollout readiness.
-                        ssh \$SSH_OPTS \$NODE \\
-                            "helm upgrade --install ${HELM_RELEASE} ~/helm \\
-                                -f ~/helm/${HELM_VALUES} \\
-                                --namespace ${APP_NAMESPACE} --create-namespace \\
-                                --set image.repository=${ECR_REPO} \\
-                                --set image.tag=${IMAGE_TAG} \\
-                                --wait --timeout 600s"
-                    """
+                            # Deploy with the node's Helm; --wait blocks on rollout readiness.
+                            ssh \$SSH_OPTS \$NODE \\
+                                "helm upgrade --install ${env.HELM_RELEASE} ~/helm \\
+                                    -f ~/helm/${env.HELM_VALUES} \\
+                                    --namespace ${env.APP_NAMESPACE} --create-namespace \\
+                                    --set image.repository=${env.ECR_REPO} \\
+                                    --set image.tag=${env.IMAGE_TAG} \\
+                                    --wait --timeout 600s"
+                        """
+                    }
                 }
             }
         }

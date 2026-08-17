@@ -1,0 +1,52 @@
+# oas-auth-service — deployment scaffolding (single source of truth).
+# Internal-only: ClusterIP, NOT routed through Kong/nginx, no API key. Redis-only
+# (token denylist) — no Postgres/ES. Depends on the internal Keycloak on the DB host.
+service:
+  name: oas-auth-service
+  namespace: app
+  container_port: 8080
+
+app_repo:
+  url: https://github.com/A5HW1NRA7AN/OAS-Auth-Service.git
+  branch: main
+
+image:
+  ecr_repository_name: oas-auth-service
+  ecr_region: ap-northeast-1
+  tag: latest
+
+health:
+  liveness_path: /actuator/health/liveness
+  readiness_path: /actuator/health/readiness
+
+openapi:
+  docs_path: /v3/api-docs
+  base_url_in_cluster: http://oas-auth-service.app.svc.cluster.local:8080
+
+resources:
+  requests: { cpu: 250m, memory: 512Mi }
+  limits: { cpu: 500m, memory: 1Gi }
+
+# Non-secret runtime env. Redis = shared oas-redis; Keycloak = internal db-host:8081.
+# KEYCLOAK_ISSUER host must match Keycloak's KC_HOSTNAME (the "issuer trap").
+env:
+  MANAGEMENT_ENDPOINT_HEALTH_PROBES_ENABLED: "true"
+  SPRING_REDIS_HOST: "10.0.10.10"
+  SPRING_REDIS_PORT: "6379"
+  KEYCLOAK_BASE_URL: "http://10.0.10.10:8081"
+  KEYCLOAK_ISSUER: "http://10.0.10.10:8081/realms/OAS"
+  KEYCLOAK_REALM: "OAS"
+  KEYCLOAK_CLIENT_ID: "oas-auth-service"
+
+# Secret-injection strategy for the Jenkins pipeline. `provider: keycloak` -> the
+# pipeline builds a Secret with just KEYCLOAK_CLIENT_SECRET from the named Jenkins
+# credential (no DB/ES). Absent => 'db-es' (the catalogue default).
+secrets:
+  secret_name: oas-auth-service-secrets
+  provider: keycloak
+  client_secret_cred_id: keycloak-client-secret
+
+helm:
+  release_name: oas-auth-service
+  chart_path: kubernetes/helm/oas-catalogue
+  values_file: values-oas-auth-service.yaml

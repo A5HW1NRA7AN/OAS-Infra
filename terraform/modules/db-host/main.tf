@@ -46,6 +46,13 @@ resource "aws_security_group" "db_host" {
     security_groups = [var.k8s_node_sg_id, var.bastion_sg_id]
   }
   ingress {
+    description     = "Keycloak from k8s nodes (oas-auth-service) + bastion (setup-realm/admin tunnel)"
+    from_port       = 8081
+    to_port         = 8081
+    protocol        = "tcp"
+    security_groups = [var.k8s_node_sg_id, var.bastion_sg_id]
+  }
+  ingress {
     description     = "SSH from bastion only"
     from_port       = 22
     to_port         = 22
