@@ -78,6 +78,46 @@ services:
           minute: 600
           policy: local
 
+  # ==========================================================================
+  # !! TEMPORARY -- UAT ONLY -- REVERT BEFORE PROD !!
+  # Exposes the INTERNAL oas-auth-service through Kong for UAT integration.
+  # This service does NOT authenticate its callers: auth_token_create mints a
+  # token for ANY userId with no credential check. Public exposure is an
+  # auth-bypass risk, accepted FOR UAT ONLY. key-auth below is the ONLY gate --
+  # it reuses the existing kong/.env role keys (no new consumer).
+  # REVERT: delete this whole block (this comment -> service -> its 2 routes ->
+  # its plugins) and re-run kong/scripts/deck-sync.sh. Declarative sync prunes
+  # it and /auth/v1/* 404s again. See README "Security notes (UAT)".
+  # ==========================================================================
+  - name: oas-auth-service                       # TEMP/UAT -- revert before prod
+    url: http://oas-auth-service.app.svc.cluster.local:8080
+    routes:
+      - name: oas-auth-service-catchall          # TEMP/UAT: /auth/v1/* (verbs don't fit the catalogue regex)
+        strip_path: false
+        paths:
+          - "~/auth/v1/.*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["readers", "editors"]
+      - name: oas-auth-service-health            # TEMP/UAT: lets the Postman Health Check pass via the hosted URL
+        strip_path: false
+        paths:
+          - "~/actuator/health/.*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["readers", "editors"]
+    plugins:
+      - name: key-auth
+        config:
+          key_names: ["apikey"]
+      - name: rate-limiting
+        enabled: false
+        config:
+          minute: 600
+          policy: local
+
 consumers:
   - username: user
     keyauth_credentials:

@@ -60,7 +60,9 @@ point.
   `values-<service>.yaml`.
 - [kubernetes/kubespray/](kubernetes/kubespray/) — cluster bootstrap (bastion/ProxyJump aware).
 - [kong/kong.decK.yaml](kong/kong.decK.yaml) — services, read/write regex routes, key-auth+acl,
-  rate-limiting(off), 3 consumers. [kong/scripts/](kong/scripts/) — `deck-sync.sh`, `rotate-key.sh`.
+  rate-limiting(off), 3 consumers. **TEMP/UAT:** also carries `oas-auth-service` (`~/auth/v1/.*` +
+  `~/actuator/health/.*`) — a temporary UAT exposure to revert before prod (see Security notes).
+  [kong/scripts/](kong/scripts/) — `deck-sync.sh`, `rotate-key.sh`.
 - [services/](services/) — one source-of-truth config per service.
 - [scripts/](scripts/) — `setup-cluster.sh` orchestrator, `refresh-ecr-secret.sh`, `flush-databases.sh`
   (wipe catalogue data for bulk re-ingest), `lib/kube-tunnel.sh`.
@@ -139,6 +141,17 @@ Static, non-secret role keys for now; `superadmin` key rotation is manual. Kong 
 Kubernetes API are never public (reached via the bastion). Elasticsearch runs with security
 disabled **only** because it is not internet-reachable (SG-restricted to the k8s nodes and the
 bastion). Pre-prod would add TLS/domain, real IAM/RBAC, and rate-limiting enforcement.
+
+**⚠️ TEMPORARY (UAT) — `oas-auth-service` is exposed through Kong.** The auth service is normally
+internal-only (ClusterIP, no route) because its endpoints trust their caller — `auth_token_create`
+mints a token for any `userId` with no credential check. For UAT integration it is temporarily routed
+through Kong (`~/auth/v1/.*` + `~/actuator/health/.*`), gated **only** by the existing role API keys;
+there is no caller authentication behind the gateway, so anyone with a valid key can mint tokens for
+any user. **Revert to strictly private before prod:** delete the `oas-auth-service` block (marked
+`TEMP/UAT`) in [kong/kong.decK.yaml](kong/kong.decK.yaml), re-run `kong/scripts/deck-sync.sh` (the
+declarative sync prunes it and `/auth/v1/*` 404s again), then drop the `auth:` block in
+[services/oas-auth-service.config.yaml](services/oas-auth-service.config.yaml) and the hosted default
+in the auth service's Postman collection.
 
 ## License
 MIT — see [LICENSE](LICENSE).
