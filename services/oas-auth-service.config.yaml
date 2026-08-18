@@ -1,6 +1,9 @@
 # oas-auth-service — deployment scaffolding (single source of truth).
-# Internal-only: ClusterIP, NOT routed through Kong/nginx, no API key. Redis-only
-# (token denylist) — no Postgres/ES. Depends on the internal Keycloak on the DB host.
+# Internal-only BY DESIGN: ClusterIP, no built-in API key, normally NOT routed
+# through Kong/nginx. Redis-only (token denylist) — no Postgres/ES. Depends on the
+# internal Keycloak on the DB host.
+# !! TEMP/UAT: temporarily exposed through Kong for UAT integration — see the auth:
+#    block below and kong/kong.decK.yaml. REVERT to strictly private before prod. !!
 service:
   name: oas-auth-service
   namespace: app
@@ -22,6 +25,17 @@ health:
 openapi:
   docs_path: /v3/api-docs
   base_url_in_cluster: http://oas-auth-service.app.svc.cluster.local:8080
+
+# !! TEMPORARY — UAT ONLY — REVERT BEFORE PROD !!  (documentation; Kong config lives
+# in kong/kong.decK.yaml). Exposed through Kong for UAT integration, gated solely by
+# the existing role keys in kong/.env (strategy: reuse the user/admin/superadmin keys
+# already used for the catalogue services — no new consumer). REVERT: remove the
+# oas-auth-service block from kong/kong.decK.yaml + re-sync, then delete this auth:
+# block and restore the "internal-only" header comment above.
+auth:
+  kong_consumer: existing-role-keys   # reuses user/admin/superadmin from kong/.env (no new consumer)
+  api_key_header: apikey
+  api_key: ""                         # intentionally blank — no new shared UAT key (Option A)
 
 resources:
   requests: { cpu: 250m, memory: 512Mi }
