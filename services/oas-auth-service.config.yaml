@@ -51,6 +51,13 @@ env:
   KEYCLOAK_ISSUER: "http://10.0.10.10:8081/realms/OAS"
   KEYCLOAK_REALM: "OAS"
   KEYCLOAK_CLIENT_ID: "oas-auth-service"
+  # Credential verification ON. auth_token_create now takes {username, password}, asks the
+  # user-catalogue's /user/v1/verify, and issues a token only for the userId it returns.
+  # BREAKING for callers still sending {userId} — they get 400. Fails closed: if the catalogue
+  # is unreachable, logins 503 rather than falling back to trusting the caller.
+  CATALOGUE_VALIDATE_ENABLED: "true"
+  # In-cluster, so the password never leaves the cluster and no Kong API key is involved.
+  CATALOGUE_BASE_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
 
 # Secret-injection strategy for the Jenkins pipeline. `provider: keycloak` -> the
 # pipeline builds a Secret with just KEYCLOAK_CLIENT_SECRET from the named Jenkins
