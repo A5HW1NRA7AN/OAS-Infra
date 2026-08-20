@@ -18,3 +18,5 @@ env:
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: "10.0.10.10"
   SPRING_REDIS_PORT: "6379"
+  # auth-service in-cluster, so the call bypasses Kong and needs no API key.
+  AUTH_SERVICE_URL: http://oas-auth-service.app.svc.cluster.local:8080
