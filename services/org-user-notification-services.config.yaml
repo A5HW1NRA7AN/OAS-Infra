@@ -92,6 +92,10 @@ env:
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: "10.0.10.10"
   SPRING_REDIS_PORT: "6379"
+  # The auth-service, reached IN-CLUSTER. The app's default is the public nginx host, which would
+  # hairpin out through Kong to a service in this same namespace and then need an API key.
+  # Going direct needs no key: AUTH_SERVICE_API_KEY stays unset (the app logs one warn per call).
+  AUTH_SERVICE_URL: http://oas-auth-service.app.svc.cluster.local:8080
 
 secrets:
   secret_name: org-user-notification-services-secrets
