@@ -7,7 +7,7 @@
 #   read route  : ~/<prefixes>/v1/(read|search).*        -> acl allow [readers, editors]
 #   write route : ~/<prefixes>/v1/(create|draft|add|
 #                   approve|review|toggle|update|
-#                   delete|import).*                       -> acl allow [editors]
+#                   delete|import|loadFromPrimary).*        -> acl allow [editors]
 #
 #   consumer  user       -> group readers            (read + search)
 #   consumer  admin       -> groups readers, editors  (full CRUD + search)
@@ -26,7 +26,7 @@ services:
       - name: org-user-notification-services-read
         strip_path: false
         paths:
-          - "~/(org|user)/v1/(read|search).*"
+          - "~/(org|user|catalogueassignment|catalogue|departmenttype)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
@@ -34,7 +34,7 @@ services:
       - name: org-user-notification-services-write
         strip_path: false
         paths:
-          - "~/(org|user)/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
+          - "~/(org|user|catalogueassignment|catalogue|departmenttype)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
         plugins:
           - name: acl
             config:
@@ -76,7 +76,7 @@ services:
       - name: agri-catalogue-read
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(read|search).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
@@ -84,7 +84,7 @@ services:
       - name: agri-catalogue-write
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(create|draft|add|approve|review|toggle|update|delete|import).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
         plugins:
           - name: acl
             config:
