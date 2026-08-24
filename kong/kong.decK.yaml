@@ -39,6 +39,27 @@ services:
           - name: acl
             config:
               allow: ["editors"]
+      # Notification endpoints use plain REST paths (/api/notifications,
+      # /api/notification-templates), not the catalogue /(prefix)/v1/(verb)
+      # convention, so they are split by HTTP method rather than URL verb.
+      - name: org-user-notification-services-notif-read
+        strip_path: false
+        methods: ["GET"]
+        paths:
+          - "~/api/(notifications|notification-templates).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["readers", "editors"]
+      - name: org-user-notification-services-notif-write
+        strip_path: false
+        methods: ["POST", "PUT", "DELETE"]
+        paths:
+          - "~/api/(notifications|notification-templates).*"
+        plugins:
+          - name: acl
+            config:
+              allow: ["editors"]
     plugins:
       - name: key-auth
         config:
@@ -79,12 +100,15 @@ services:
           policy: local
 
   # ==========================================================================
-  # !! TEMPORARY -- UAT ONLY -- REVERT BEFORE PROD !!
-  # Exposes the INTERNAL oas-auth-service through Kong for UAT integration.
-  # This service does NOT authenticate its callers: auth_token_create mints a
-  # token for ANY userId with no credential check. Public exposure is an
-  # auth-bypass risk, accepted FOR UAT ONLY. key-auth below is the ONLY gate --
-  # it reuses the existing kong/.env role keys (no new consumer).
+  # TEMPORARY 
+  # Exposes the INTERNAL oas-auth-service through Kong so UAT integration partners
+  # can call it directly instead of tunnelling through the bastion.
+  # auth_token_create IS credential-checked (CATALOGUE_VALIDATE_ENABLED=true: the
+  # user-catalogue verifies {email, password}, fail-closed). The auth_user_* endpoints
+  # are NOT -- they authenticate no caller, and auth_user_create upserts org_id/
+  # entity_type, so a role-key holder can rewrite or delete another identity.
+  # Accepted FOR UAT ONLY; key-auth below is the only gate and it reuses the existing
+  # kong/.env role keys (no new consumer).
   # REVERT: delete this whole block (this comment -> service -> its 2 routes ->
   # its plugins) and re-run kong/scripts/deck-sync.sh. Declarative sync prunes
   # it and /auth/v1/* 404s again. See README "Security notes (UAT)".
