@@ -11,7 +11,7 @@ env:
   KEYCLOAK_ISSUER: "http://10.0.10.10:8081/realms/OAS"
   KEYCLOAK_REALM: "OAS"
   KEYCLOAK_CLIENT_ID: "oas-auth-service"
-  # Credential verification ON: auth_token_create takes {username, password} and asks the
+  # Credential verification ON: auth_token_create takes {email, password} and asks the
   # catalogue. Fails closed — an unreachable catalogue means 503, never a token.
   CATALOGUE_VALIDATE_ENABLED: "true"
   CATALOGUE_BASE_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
