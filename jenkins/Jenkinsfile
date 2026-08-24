@@ -6,6 +6,11 @@
 // below); bastion/node/nginx IPs are discovered from EC2 Name tags via aws-credentials.
 // Image tag = the app commit SHA (immutable); deploy is gated by `helm --wait`.
 // Onboard a service: add a SERVICE_BY_JOB entry + a pipelineJob in casc.yaml.
+//
+// A service whose config declares keycloak_realm.realm_setup_script also gets its identity
+// provider configured from the same button: the stage runs that script (from the APP checkout,
+// so realm config ships with the code that needs it) against the live Keycloak over a bastion
+// tunnel. Requires jq on the agent — see the Jenkins repo's Dockerfile.
 pipeline {
     agent any
 
@@ -57,6 +62,29 @@ pipeline {
                     env.SECRET_PROVIDER   = cfg('provider') ?: 'db-es'
                     env.KC_SECRET_CRED_ID = cfg('client_secret_cred_id')
 
+                    // Optional realm-configuration stage (auth only). Values in the env: block are
+                    // quoted, so strip them; the realm host is derived from KEYCLOAK_BASE_URL rather
+                    // than repeated, so the DB-host IP stays declared in exactly one place.
+                    def cfgq = { key -> cfg(key).replaceAll('"', '') }
+                    env.REALM_SETUP_SCRIPT = cfg('realm_setup_script')
+                    env.KC_ADMIN_CRED_ID   = cfg('admin_cred_id')
+                    if (env.REALM_SETUP_SCRIPT) {
+                        def kcUrl = cfgq('KEYCLOAK_BASE_URL')
+                        // sed, not a Groovy Matcher: matchers are not CPS-serializable.
+                        env.KC_HOST = sh(script: "printf %s '${kcUrl}' | sed -E 's#^https?://##; s#[:/].*##'",
+                                         returnStdout: true).trim()
+                        env.KC_PORT = sh(script: "printf %s '${kcUrl}' | sed -E 's#^https?://[^:/]+:?##; s#/.*##'",
+                                         returnStdout: true).trim() ?: '8081'
+                        env.KC_REALM     = cfgq('KEYCLOAK_REALM')
+                        env.KC_CLIENT_ID = cfgq('KEYCLOAK_CLIENT_ID')
+                        if (!env.KC_ADMIN_CRED_ID) {
+                            error("keycloak_realm.realm_setup_script is set for ${env.SERVICE} but " +
+                                  "admin_cred_id is not — the script needs Keycloak master admin credentials.")
+                        }
+                        echo "Keycloak realm : ${env.KC_REALM} on ${env.KC_HOST}:${env.KC_PORT} " +
+                             "(client ${env.KC_CLIENT_ID}, script ${env.REALM_SETUP_SCRIPT})"
+                    }
+
                     // Account ID + live host IPs from AWS (EC2 Name tags) — survives IP changes (no EIP).
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: 'aws-credentials']]) {
                         env.AWS_ACCOUNT_ID = sh(
@@ -106,6 +134,77 @@ pipeline {
                     }
                 }
                 echo "Application commit (immutable image tag): ${env.IMAGE_TAG}"
+            }
+        }
+
+        // Runs before the build on purpose: it is the cheapest stage to fail on, and the realm
+        // script is idempotent and additive, so a realm applied ahead of a build that later fails
+        // leaves the still-running old pod working. Skipped for services with no realm_setup_script.
+        stage('Configure Keycloak Realm') {
+            when { expression { env.REALM_SETUP_SCRIPT?.trim() } }
+            steps {
+                withCredentials([
+                    sshUserPrivateKey(credentialsId: 'ec2-deploy-key', keyFileVariable: 'SSH_KEY'),
+                    usernamePassword(credentialsId: env.KC_ADMIN_CRED_ID,
+                                     usernameVariable: 'KC_ADMIN_USER', passwordVariable: 'KC_ADMIN_PASS'),
+                    string(credentialsId: env.KC_SECRET_CRED_ID, variable: 'KC_CLIENT_SECRET'),
+                ]) {
+                    // Build-scoped local port so two concurrent builds cannot fight over it.
+                    script { env.KC_LOCAL_PORT = 18000 + (env.BUILD_NUMBER as Integer) % 1000 }
+                    sh """
+                        set -e
+                        SSHCFG=\$(mktemp)
+                        cat > \$SSHCFG <<SSHEOF
+Host *
+  StrictHostKeyChecking no
+  UserKnownHostsFile /dev/null
+  IdentityFile \${SSH_KEY}
+SSHEOF
+
+                        # Keycloak listens on the DB host's private address, so it is reached the
+                        # same way a human reaches it: a port-forward through the bastion. A control
+                        # socket makes the teardown deterministic instead of a pkill by pattern.
+                        CTL=\$(mktemp -u)
+                        # Every arm tolerates failure: the trap's last exit status would otherwise
+                        # become the step's, turning a clean run into a red build.
+                        cleanup() {
+                            ssh -S "\$CTL" -O exit ${env.EC2_USER}@${env.BASTION_HOST} 2>/dev/null || true
+                            rm -f "\$SSHCFG" 2>/dev/null || true
+                            if [ -n "\${WORK:-}" ]; then rm -rf "\$WORK" 2>/dev/null || true; fi
+                            return 0
+                        }
+                        trap cleanup EXIT
+
+                        # ExitOnForwardFailure: without it ssh backgrounds happily on a busy local
+                        # port and the script would then configure whatever else is listening there.
+                        ssh -F \$SSHCFG -f -N -M -S "\$CTL" -o ExitOnForwardFailure=yes \\
+                            -L ${env.KC_LOCAL_PORT}:${env.KC_HOST}:${env.KC_PORT} \\
+                            ${env.EC2_USER}@${env.BASTION_HOST}
+
+                        # Run from a copy outside the workspace: the script writes the client secret
+                        # to a .env beside itself, which must not survive in the build workspace.
+                        WORK=\$(mktemp -d)
+                        cp app/${env.REALM_SETUP_SCRIPT} \$WORK/
+                        KC=http://127.0.0.1:${env.KC_LOCAL_PORT} \\
+                        REALM=${env.KC_REALM} \\
+                        CLIENT=${env.KC_CLIENT_ID} \\
+                        ADMIN_USER="\${KC_ADMIN_USER}" ADMIN_PASS="\${KC_ADMIN_PASS}" \\
+                            bash \$WORK/\$(basename ${env.REALM_SETUP_SCRIPT})
+
+                        # The script READS the client secret (it never rotates one), so this compares
+                        # what Keycloak actually holds against the credential the deploy stage is
+                        # about to bake into the k8s Secret. A drift here means the new pod cannot get
+                        # an admin token — better to stop now than to fail at the first user publish.
+                        LIVE=\$(sed -n 's/^KEYCLOAK_CLIENT_SECRET=//p' \$WORK/.env)
+                        if [ "\$LIVE" != "\${KC_CLIENT_SECRET}" ]; then
+                            echo "FATAL: Keycloak's client secret for ${env.KC_CLIENT_ID} does not match the"
+                            echo "Jenkins credential '${env.KC_SECRET_CRED_ID}'. Update that credential (and"
+                            echo "KEYCLOAK_CLIENT_SECRET in the Jenkins host .env) to the live value, then re-run."
+                            exit 1
+                        fi
+                        echo "Realm ${env.KC_REALM} configured; client secret matches ${env.KC_SECRET_CRED_ID}."
+                    """
+                }
             }
         }
 

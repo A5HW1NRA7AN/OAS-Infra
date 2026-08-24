@@ -142,16 +142,25 @@ Kubernetes API are never public (reached via the bastion). Elasticsearch runs wi
 disabled **only** because it is not internet-reachable (SG-restricted to the k8s nodes and the
 bastion). Pre-prod would add TLS/domain, real IAM/RBAC, and rate-limiting enforcement.
 
-**⚠️ TEMPORARY (UAT) — `oas-auth-service` is exposed through Kong.** The auth service is normally
-internal-only (ClusterIP, no route) because its endpoints trust their caller — `auth_token_create`
-mints a token for any `userId` with no credential check. For UAT integration it is temporarily routed
-through Kong (`~/auth/v1/.*` + `~/actuator/health/.*`), gated **only** by the existing role API keys;
-there is no caller authentication behind the gateway, so anyone with a valid key can mint tokens for
-any user. **Revert to strictly private before prod:** delete the `oas-auth-service` block (marked
-`TEMP/UAT`) in [kong/kong.decK.yaml](kong/kong.decK.yaml), re-run `kong/scripts/deck-sync.sh` (the
-declarative sync prunes it and `/auth/v1/*` 404s again), then drop the `auth:` block in
+**TEMPORARY — `oas-auth-service` is exposed through Kong.** The auth service is normally
+internal-only (ClusterIP, no route). It is routed through Kong (`~/auth/v1/.*` +
+`~/actuator/health/.*`) so integration partners can exercise it directly, without a bastion tunnel
+and the workarounds that come with it — a deliberate, time-boxed UAT trade-off.
+
+Token issuance itself is *not* open: `CATALOGUE_VALIDATE_ENABLED=true`, so `auth_token_create` takes
+`{email, password}`, has the user-catalogue verify them, and fails closed. What remains accepted for
+UAT is that the **user-management** endpoints (`auth_user_create`, `auth_user_revoke`,
+`auth_user_delete`) still authenticate no caller — the role API key is the only gate. Since
+`auth_user_create` is an upsert that rewrites `org_id`/`entity_type`, a key holder can alter another
+identity's claims or delete it. Acceptable while UAT is a closed group with rotatable keys; not
+acceptable in prod.
+
+**Revert to strictly private before prod:** delete the `oas-auth-service` block (marked `TEMP/UAT`)
+in [kong/kong.decK.yaml](kong/kong.decK.yaml), re-run `kong/scripts/deck-sync.sh` (the declarative
+sync prunes it and `/auth/v1/*` 404s again), then drop the `auth:` block in
 [services/oas-auth-service.config.yaml](services/oas-auth-service.config.yaml) and the hosted default
-in the auth service's Postman collection.
+in the auth service's Postman collection. An interim step, if the exposure needs to outlast UAT:
+narrow the route to `~/auth/v1/auth_token_.*` so only the credential-checked endpoints are public.
 
 ## License
 MIT — see [LICENSE](LICENSE).
