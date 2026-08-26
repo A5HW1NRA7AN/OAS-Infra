@@ -51,7 +51,7 @@ routing:
 # scripts/flush-databases.sh (Postgres table = <catalogue>, ES index =
 # <catalogue>_index, Redis keys = <catalogue>-*). Keep in sync with the Kong
 # route prefixes in kong/kong.decK.yaml. Add a new catalogue here when you add one.
-catalogues: [org, user, catalogue, catalogueassignment, departmenttype]
+catalogues: [org, user, catalogue, catalogueassignment, orgtype]
 
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
