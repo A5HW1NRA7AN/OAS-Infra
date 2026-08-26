@@ -151,7 +151,7 @@ Token issuance itself is *not* open: `CATALOGUE_VALIDATE_ENABLED=true`, so `auth
 `{email, password}`, has the user-catalogue verify them, and fails closed. What remains accepted for
 UAT is that the **user-management** endpoints (`auth_user_create`, `auth_user_revoke`,
 `auth_user_delete`) still authenticate no caller — the role API key is the only gate. Since
-`auth_user_create` is an upsert that rewrites `org_id`/`entity_type`, a key holder can alter another
+`auth_user_create` is an upsert that rewrites `org_id`/`functional_role`, a key holder can alter another
 identity's claims or delete it. Acceptable while UAT is a closed group with rotatable keys; not
 acceptable in prod.
 
