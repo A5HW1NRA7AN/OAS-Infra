@@ -42,7 +42,7 @@ routing:
 # scripts/flush-databases.sh (Postgres table = <catalogue>, ES index =
 # <catalogue>_index, Redis keys = <catalogue>-*). Keep in sync with the Kong
 # route prefixes in kong/kong.decK.yaml. Add a new catalogue here when you add one.
-catalogues: [audit, seed, croptype, cropcategory, cropvariety, livestock, livestockbreed, livestockcategory, season, soil, extensionequipment, pesticide, insecticide, fertilizer, marketplace, locationmapper, locationobject]
+catalogues: [audit, seed, croptype, cropcategory, cropvariety, livestock, livestockbreed, livestockcategory, season, soil, extensionequipment, pesticide, insecticide, fertilizer, marketplace, locationmapper, locationobject, locationconfig]
 
 # Application container resource envelope. Data-service (Postgres/Redis/
 # Elasticsearch) tuning lives in scripts/setup-cluster.sh — see the capacity
@@ -80,6 +80,13 @@ env:
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: "10.0.10.10"
   SPRING_REDIS_PORT: "6379"
+  # Auth-service token validation, reached IN-CLUSTER. The app's default is the public nginx
+  # host, which would hairpin a pod in this namespace out through Kong and back into the same
+  # namespace on every create/search/read — and that host is an auto-assigned IP that changes
+  # on any nginx stop/start. Going direct needs no API key, so OAS_AUTH_API_KEY stays unset
+  # (the app logs one warn per call). Mirrors AUTH_SERVICE_URL in
+  # org-user-notification-services.config.yaml.
+  OAS_AUTH_VALIDATE_URL: "http://oas-auth-service.app.svc.cluster.local:8080/auth/v1/auth_token_validate"
 
 secrets:
   secret_name: catalogue-service-secrets

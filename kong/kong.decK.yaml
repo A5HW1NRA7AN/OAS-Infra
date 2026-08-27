@@ -76,7 +76,7 @@ services:
       - name: agri-catalogue-read
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(read|search).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject|locationconfig)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
@@ -84,7 +84,7 @@ services:
       - name: agri-catalogue-write
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject|locationconfig)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
         plugins:
           - name: acl
             config:
