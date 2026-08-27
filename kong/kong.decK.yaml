@@ -26,7 +26,7 @@ services:
       - name: org-user-notification-services-read
         strip_path: false
         paths:
-          - "~/(org|user|catalogueassignment|catalogue|departmenttype)/v1/(read|search).*"
+          - "~/(org|user|catalogueassignment|catalogue|orgtype)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
@@ -34,7 +34,7 @@ services:
       - name: org-user-notification-services-write
         strip_path: false
         paths:
-          - "~/(org|user|catalogueassignment|catalogue|departmenttype)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
+          - "~/(org|user|catalogueassignment|catalogue|orgtype)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
         plugins:
           - name: acl
             config:
@@ -76,7 +76,7 @@ services:
       - name: agri-catalogue-read
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(read|search).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject|locationconfig)/v1/(read|search).*"
         plugins:
           - name: acl
             config:
@@ -84,7 +84,7 @@ services:
       - name: agri-catalogue-write
         strip_path: false
         paths:
-          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
+          - "~/(audit|seed|croptype|cropcategory|cropvariety|livestock|livestockbreed|livestockcategory|season|soil|extensionequipment|pesticide|insecticide|fertilizer|marketplace|locationmapper|locationobject|locationconfig)/v1/(create|draft|add|approve|review|toggle|update|delete|import|loadFromPrimary).*"
         plugins:
           - name: acl
             config:
@@ -106,7 +106,7 @@ services:
   # auth_token_create IS credential-checked (CATALOGUE_VALIDATE_ENABLED=true: the
   # user-catalogue verifies {email, password}, fail-closed). The auth_user_* endpoints
   # are NOT -- they authenticate no caller, and auth_user_create upserts org_id/
-  # entity_type, so a role-key holder can rewrite or delete another identity.
+  # functional_role, so a role-key holder can rewrite or delete another identity.
   # Accepted FOR UAT ONLY; key-auth below is the only gate and it reuses the existing
   # kong/.env role keys (no new consumer).
   # REVERT: delete this whole block (this comment -> service -> its 2 routes ->

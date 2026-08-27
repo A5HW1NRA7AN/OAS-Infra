@@ -18,3 +18,7 @@ env:
   ELASTICSEARCH_PORT: "9200"
   SPRING_REDIS_HOST: "10.0.10.10"
   SPRING_REDIS_PORT: "6379"
+  # Auth-service token validation, in-cluster. The app default is the public nginx host, which
+  # would hairpin out through Kong back into this namespace and then need an API key; direct
+  # needs none, so OAS_AUTH_API_KEY stays unset.
+  OAS_AUTH_VALIDATE_URL: "http://oas-auth-service.app.svc.cluster.local:8080/auth/v1/auth_token_validate"
