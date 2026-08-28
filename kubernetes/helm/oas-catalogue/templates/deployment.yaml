@@ -12,6 +12,12 @@ spec:
       {{- include "oas-catalogue.selectorLabels" . | nindent 6 }}
   template:
     metadata:
+      annotations:
+        # Forces a rollout whenever the ConfigMap changes. envFrom injects env vars at pod
+        # START only, so without this a values-only change (no new image tag) updates the
+        # ConfigMap while the running pods keep the old env — the deploy reports success and
+        # the app silently keeps using its previous config.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
       labels:
         {{- include "oas-catalogue.selectorLabels" . | nindent 8 }}
     spec:
