@@ -58,6 +58,15 @@ env:
   CATALOGUE_VALIDATE_ENABLED: "true"
   # In-cluster, so the password never leaves the cluster and no Kong API key is involved.
   CATALOGUE_BASE_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
+  # Raised from the app default of 900s to match the OAS realm's ssoSessionMaxLifespan (36000s).
+  # auth_token_refresh lets a session live up to 10h on 5-min access tokens, and this one TTL
+  # governs the Redis session index AND both revoke denylists (user- and sid-level). Left at
+  # 900s, two things break once refresh is in use:
+  #   - auth_user_revoke's denylist expires after 15 min while the session is still refreshable,
+  #     so a revoked user gets back in if the best-effort Keycloak disable didn't land;
+  #   - the session index drops sids that revokeUser needs to enumerate.
+  # Keep this >= ssoSessionMaxLifespan; re-check if that realm setting is ever changed.
+  KEYCLOAK_DENYLIST_SID_TTL_SECONDS: "36000"
 
 # Keycloak realm configuration is part of the deploy, not a manual side-errand. The app repo
 # owns the script (it changes with the code that depends on it — a new claim needs a new mapper);
