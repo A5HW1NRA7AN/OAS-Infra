@@ -15,3 +15,9 @@ env:
   # catalogue. Fails closed — an unreachable catalogue means 503, never a token.
   CATALOGUE_VALIDATE_ENABLED: "true"
   CATALOGUE_BASE_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
+  # Raised from the app default of 900s to match the realm's ssoSessionMaxLifespan (36000s).
+  # auth_token_refresh means a session can live 10h on 5-min access tokens, and this TTL governs
+  # BOTH the Redis session index and the revoke denylists. At 900s a revoked user's block would
+  # expire while their session was still refreshable, and the session index would drop sids that
+  # revokeUser still needs to enumerate. Keep >= ssoSessionMaxLifespan in the OAS realm.
+  KEYCLOAK_DENYLIST_SID_TTL_SECONDS: "36000"
