@@ -22,3 +22,6 @@ env:
   # would hairpin out through Kong back into this namespace and then need an API key; direct
   # needs none, so OAS_AUTH_API_KEY stays unset.
   OAS_AUTH_VALIDATE_URL: "http://oas-auth-service.app.svc.cluster.local:8080/auth/v1/auth_token_validate"
+  # org-user-notification-services, in-cluster (NotificationUtil -> /api/notifications).
+  # ORG_USER_API_KEY stays unset: the key only gets past Kong, which we bypass.
+  ORG_USER_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
