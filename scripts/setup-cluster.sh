@@ -19,7 +19,6 @@ export KUBECONFIG="$REPO_ROOT/scratch_kubeconfig"
 # shellcheck disable=SC1091
 source "$REPO_ROOT/scripts/lib/kube-tunnel.sh"
 
-ssh_bastion() { ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "ubuntu@$BASTION_IP" "$@"; }
 ssh_via_bastion() { # ssh_via_bastion <private-ip> <cmd...>
   local host="$1"; shift
   ssh -i "$KEY_PATH" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \

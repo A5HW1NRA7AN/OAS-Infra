@@ -87,6 +87,12 @@ env:
   # (the app logs one warn per call). Mirrors AUTH_SERVICE_URL in
   # org-user-notification-services.config.yaml.
   OAS_AUTH_VALIDATE_URL: "http://oas-auth-service.app.svc.cluster.local:8080/auth/v1/auth_token_validate"
+  # org-user-notification-services, reached IN-CLUSTER. NotificationUtil posts to
+  # {ORG_USER_URL}/api/notifications; the app's default is again the public nginx host with an
+  # `apikey` header. Same reasoning as OAS_AUTH_VALIDATE_URL above: the key exists only to get
+  # past Kong, so going direct removes it — ORG_USER_API_KEY stays unset and the header is sent
+  # empty, which the notification endpoint does not check (Kong was the only gate).
+  ORG_USER_URL: "http://org-user-notification-services.app.svc.cluster.local:8080"
 
 secrets:
   secret_name: catalogue-service-secrets
